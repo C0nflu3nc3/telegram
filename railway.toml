@@ -1,0 +1,7 @@
+[build]
+builder = "RAILPACK"
+
+[deploy]
+startCommand = "python -u run.py"
+restartPolicyType = "ALWAYS"
+restartPolicyMaxRetries = 10
