@@ -1,36 +1,45 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from aiogram import Router
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
 
-from app.config import get_settings
+from app.database.crud import reset_user_session, upsert_user
+from app.database.db import get_session
+from app.services.keyn_content import HOW_TO_TALK_TEXT, get_random_greeting
+from app.services.keyn_keyboard import build_main_menu
+from app.services.keyn_logic import ensure_keyn_ready
 
 
 router = Router()
 
 
-START_TEXT = "Что бы вы хотели узнать сегодня?"
+def _missing_database_text() -> str:
+    return (
+        "Архивы Кейна пока не найдены. "
+        "Администратору нужно добавить файл keyn_start_database.txt в корень проекта."
+    )
 
 
 @router.message(CommandStart())
 async def command_start(message: Message) -> None:
-    await message.answer(START_TEXT)
+    if not message.from_user:
+        return
+
+    try:
+        ensure_keyn_ready()
+    except FileNotFoundError:
+        await message.answer(_missing_database_text(), reply_markup=build_main_menu())
+        return
+
+    user = message.from_user
+    with get_session() as session:
+        upsert_user(session, user.id, user.username, user.full_name)
+        reset_user_session(session, user.id)
+
+    await message.answer(get_random_greeting(), reply_markup=build_main_menu())
 
 
 @router.message(Command("help"))
 async def command_help(message: Message) -> None:
-    settings = get_settings()
-    user_id = message.from_user.id if message.from_user else 0
-
-    if settings.is_admin(user_id):
-        await message.answer(
-            "Команды администратора:\n"
-            "/load - загрузить новую базу знаний\n"
-            "/clear - очистить текущую базу знаний\n"
-            "/status - посмотреть состояние базы\n"
-            "/cancel - выйти из режима загрузки"
-        )
-        return
-
-    await message.answer(START_TEXT)
+    await message.answer(HOW_TO_TALK_TEXT, reply_markup=build_main_menu())

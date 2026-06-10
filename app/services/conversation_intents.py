@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import logging
 import random
@@ -13,24 +13,25 @@ from app.services.no_knowledge import get_random_nonsense_message
 logger = logging.getLogger(__name__)
 
 GREETING_RESPONSES = (
-    "Приветствую тебя, юный странник. Что бы ты хотел узнать?",
-    "Рад видеть тебя у свитков знания, юный странник. О чем ты желаешь спросить?",
-    "Привет тебе, юный странник. Какую тайну ты хочешь раскрыть сегодня?",
-    "Добро пожаловать, юный странник. Какой ответ ты ищешь в этот час?",
-    "Мир тебе, юный странник. Что ты хотел бы узнать из хранимого знания?",
+    "Валентия слышит тебя. Говори, Житель.",
+    "Связь с Кейном устойчива. Что ты хотел узнать, Житель?",
+    "Кейн на связи. Задай свой вопрос, Житель.",
+    "Архивы готовы слушать. О чём ты хочешь спросить, Житель?",
+    "Сигнал принят. Что тебя интересует, Житель?",
 )
+
 PERSONAL_RESPONSES = (
-    "Не трать время на столь ненужные и пустые вопросы, юный странник. Лучше спроси о том, что действительно скрыто в свитках знания.",
-    "Юный странник, не растрачивай слова на пустое. Направь вопрос туда, где знание может принести тебе пользу.",
-    "Оставь праздное любопытство, юный странник. Лучше спроси о том, что ведет к сути, а не к пустому разговору.",
-    "Не ищи во мне предмета для пустой беседы, юный странник. Спроси лучше о том, что сокрыто в знаниях.",
-    "Юный странник, не стоит терять время на вопросы без пользы. Обратись лучше к тому, что действительно важно.",
+    "Не растрачивай время на пустые расспросы, Житель. Лучше спроси о том, что пригодится Валентии.",
+    "Кейна не нужно расспрашивать о нём самом. Задай вопрос, который ведёт к знанию, Житель.",
+    "Личные разговоры ничего не прибавят архивам. Спроси лучше о Риммэле, домах или событиях королевства.",
+    "Житель, оставь пустые вопросы. Направь мысль туда, где знание может принести пользу.",
+    "Не ищи во мне тему для праздной беседы. Спроси о том, что действительно важно для Риммэля.",
 )
 
 _SHORT_GREETING_WORDS = {
     "прив",
     "привет",
-    "здарова",
+    "здорова",
     "здорово",
     "здравствуй",
     "здравствуйте",
@@ -40,39 +41,14 @@ _SHORT_GREETING_WORDS = {
     "ку",
     "куку",
     "хай",
-    "хелло",
-    "hello",
-    "hi",
     "йо",
     "дратути",
     "дарова",
     "вечерочек",
 }
-_GREETING_STEMS = ("прив", "здрав", "здар", "салам", "салем", "салют", "хай", "хелл", "даров", "дратут")
-_SECOND_PERSON_MARKERS = (
-    "ты",
-    "тебя",
-    "тебе",
-    "тобой",
-    "тобою",
-    "твой",
-    "твое",
-    "твоя",
-    "твои",
-    "бот",
-)
-_PERSONAL_MARKERS = (
-    "чувств",
-    "зовут",
-    "лет",
-    "жив",
-    "настроен",
-    "дела",
-    "личн",
-    "нравит",
-    "одинок",
-    "имя",
-)
+_GREETING_STEMS = ("прив", "здрав", "здар", "салам", "салем", "салют", "хай", "даров", "дратут")
+_SECOND_PERSON_MARKERS = ("ты", "тебя", "тебе", "тобой", "тобою", "твой", "твое", "твоя", "твои", "бот", "кейн")
+_PERSONAL_MARKERS = ("чувств", "зовут", "лет", "жив", "настроен", "дела", "личн", "нравит", "одинок", "имя")
 _QUESTION_WORDS = {
     "кто",
     "что",
@@ -93,25 +69,11 @@ _QUESTION_WORDS = {
     "можно",
     "ли",
 }
-_REQUEST_STEMS = (
-    "расска",
-    "объяс",
-    "опиш",
-    "повед",
-    "скажи",
-    "подскаж",
-    "поясн",
-    "уточн",
-    "назов",
-    "дай",
-    "перечисл",
-    "напомн",
-)
+_REQUEST_STEMS = ("расска", "объяс", "опиш", "повед", "скажи", "подскаж", "поясн", "уточн", "назов", "дай", "перечисл", "напомн")
 _FILLER_WORDS = {
     "ага",
     "ааа",
     "блин",
-    "бля",
     "бы",
     "вот",
     "да",
@@ -137,7 +99,6 @@ _FILLER_WORDS = {
 _MAX_CLASSIFIER_WORDS = 12
 _MAX_CLASSIFIER_CHARS = 96
 
-# Pre-compiled regex patterns (avoids recompilation on every call)
 _RE_NORMALIZE_CHARS = re.compile(r"[^\w\s!?.,-]")
 _RE_NORMALIZE_SPACES = re.compile(r"\s{2,}")
 _RE_GREETING = re.compile(
@@ -145,8 +106,8 @@ _RE_GREETING = re.compile(
     re.IGNORECASE,
 )
 _PERSONAL_PATTERNS = [
-    re.compile(p, re.IGNORECASE)
-    for p in (
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
         r"\bкак\s+ты\b",
         r"\bкак\s+дела\b",
         r"\bкак\s+себя\s+чувствуешь\b",
@@ -159,6 +120,7 @@ _PERSONAL_PATTERNS = [
         r"\bтебе\s+нравится\b",
         r"\bу\s+тебя\s+есть\s+чувства\b",
         r"\bтебе\s+одиноко\b",
+        r"\bкейн,?\s+как\s+ты\b",
     )
 ]
 
@@ -189,7 +151,6 @@ def detect_conversation_intent(text: str) -> str | None:
         return random.choice(PERSONAL_RESPONSES)
     if intent == "nonsense":
         return get_random_nonsense_message()
-
     return None
 
 
@@ -218,7 +179,7 @@ def _is_greeting_by_heuristic(words: list[str]) -> bool:
 def _is_personal_by_heuristic(normalized: str, words: list[str]) -> bool:
     if not _has_personal_focus(normalized, words):
         return False
-    return any(p.search(normalized) for p in _PERSONAL_PATTERNS)
+    return any(pattern.search(normalized) for pattern in _PERSONAL_PATTERNS)
 
 
 def _has_personal_focus(normalized: str, words: list[str]) -> bool:
@@ -231,8 +192,9 @@ def _is_nonsense_by_heuristic(normalized: str, words: list[str]) -> bool:
     if not words or _has_question_signal(normalized, words):
         return False
 
-    # Single pass instead of three separate list comprehensions
-    short_words, filler_words, meaningful_words = [], [], []
+    short_words: list[str] = []
+    filler_words: list[str] = []
+    meaningful_words: list[str] = []
     for word in words:
         if word in _FILLER_WORDS:
             filler_words.append(word)
@@ -263,10 +225,7 @@ def _has_question_signal(normalized: str, words: list[str]) -> bool:
 
 
 def _has_request_signal(words: list[str]) -> bool:
-    return any(
-        any(word.startswith(stem) for stem in _REQUEST_STEMS)
-        for word in words
-    )
+    return any(any(word.startswith(stem) for stem in _REQUEST_STEMS) for word in words)
 
 
 def _has_repeated_word_loop(words: list[str]) -> bool:
@@ -289,7 +248,7 @@ def _detect_intent_via_api(normalized_text: str) -> str | None:
     instructions = (
         "Классифицируй короткое сообщение. "
         "Варианты: greeting, personal, nonsense, other. "
-        "greeting = приветствие боту; personal = вопрос о самом боте; "
+        "greeting = приветствие боту; personal = вопрос о самом Кейне; "
         "nonsense = бессвязная или непонятная реплика без ясного вопроса; "
         "other = любой осмысленный вопрос или просьба. "
         "Если есть понятный вопрос или просьба, выбирай other. "
@@ -314,8 +273,8 @@ def _detect_intent_via_api(normalized_text: str) -> str | None:
             max_tokens=16,
         )
         label = (completion.choices[0].message.content or "").strip().lower()
-    except Exception as e:
-        logger.warning("Intent API call failed: %s", e)
+    except Exception as exc:
+        logger.warning("Intent API call failed: %s", exc)
         return None
 
     if label in {"greeting", "personal", "nonsense", "other"}:

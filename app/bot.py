@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -7,17 +7,13 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from app.config import get_settings
 from app.database.db import init_db
-from app.handlers.admin import router as admin_router
 from app.handlers.ask import router as ask_router
 from app.handlers.start import router as start_router
-from app.handlers.upload import router as upload_router
 
 
 def create_dispatcher() -> Dispatcher:
     dispatcher = Dispatcher(storage=MemoryStorage())
     dispatcher.include_router(start_router)
-    dispatcher.include_router(admin_router)
-    dispatcher.include_router(upload_router)
     dispatcher.include_router(ask_router)
     return dispatcher
 

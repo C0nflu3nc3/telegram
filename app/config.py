@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 from dataclasses import dataclass
@@ -10,6 +10,14 @@ from dotenv import load_dotenv
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_DIR / ".env")
+
+
+def _get_env(*names: str, default: str = "") -> str:
+    for name in names:
+        value = os.getenv(name)
+        if value and value.strip():
+            return value.strip()
+    return default
 
 
 def _get_int(name: str, default: int) -> int:
@@ -49,6 +57,7 @@ class Settings:
     database_path: Path
     chroma_path: Path
     upload_path: Path
+    keyn_database_path: Path
     chroma_collection: str
     embedding_model: str
     chat_model: str
@@ -69,17 +78,14 @@ class Settings:
         return self.admin_id
 
     def is_admin(self, user_id: int) -> bool:
-        return user_id == self.admin_id
+        return self.admin_id > 0 and user_id == self.admin_id
 
     def validate(self) -> None:
         missing = []
         if not self.bot_token:
-            missing.append("BOT_TOKEN")
+            missing.append("TELEGRAM_BOT_TOKEN/BOT_TOKEN")
         if not self.openai_api_key:
             missing.append("OPENAI_API_KEY")
-        if self.admin_id <= 0:
-            missing.append("ADMIN_ID")
-
         if missing:
             joined = ", ".join(missing)
             raise RuntimeError(
@@ -92,18 +98,21 @@ class Settings:
 def get_settings() -> Settings:
     data_root = _default_data_root()
     return Settings(
-        bot_token=os.getenv("BOT_TOKEN", "").strip(),
-        openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
+        bot_token=_get_env("TELEGRAM_BOT_TOKEN", "BOT_TOKEN"),
+        openai_api_key=_get_env("OPENAI_API_KEY"),
         admin_id=_get_int("ADMIN_ID", 0),
         database_path=_resolve_path(os.getenv("DATABASE_PATH"), data_root / "app.db"),
         chroma_path=_resolve_path(os.getenv("CHROMA_PATH"), data_root / "chroma_db"),
         upload_path=_resolve_path(os.getenv("UPLOAD_PATH"), data_root / "uploads"),
-        chroma_collection=os.getenv("CHROMA_COLLECTION", "knowledge_base").strip(),
-        embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small").strip(),
-        chat_model=os.getenv("CHAT_MODEL", "gpt-4.1-mini").strip(),
-        intent_model=os.getenv("INTENT_MODEL", "").strip()
-        or os.getenv("CHAT_MODEL", "gpt-4.1-mini").strip(),
-        assistant_style=os.getenv("ASSISTANT_STYLE", "").strip(),
+        keyn_database_path=_resolve_path(
+            os.getenv("KEYN_DATABASE_PATH"),
+            PROJECT_DIR / "keyn_start_database.txt",
+        ),
+        chroma_collection=_get_env("CHROMA_COLLECTION", default="knowledge_base"),
+        embedding_model=_get_env("EMBEDDING_MODEL", default="text-embedding-3-small"),
+        chat_model=_get_env("OPENAI_MODEL", "CHAT_MODEL", default="gpt-5.4-mini"),
+        intent_model=_get_env("INTENT_MODEL", "CHAT_MODEL", "OPENAI_MODEL", default="gpt-5.4-nano"),
+        assistant_style=_get_env("ASSISTANT_STYLE"),
         chunk_size=_get_int("CHUNK_SIZE", 500),
         chunk_overlap=_get_int("CHUNK_OVERLAP", 100),
         top_k=_get_int("TOP_K", 5),

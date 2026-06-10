@@ -1,9 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
+
+import random
 
 from sqlalchemy import delete, desc, func, select
 from sqlalchemy.orm import Session
 
-from app.database.models import Document, Message, User
+from app.database.models import Document, Message, User, UserState
 
 
 def upsert_user(
@@ -74,3 +76,61 @@ def get_last_document(session: Session, user_id: int) -> Document | None:
         .limit(1)
     )
     return session.scalar(statement)
+
+
+def get_or_create_user_state(session: Session, user_id: int) -> UserState:
+    state = session.get(UserState, user_id)
+    if state is None:
+        state = UserState(
+            user_id=user_id,
+            current_section=None,
+            current_topic=None,
+            message_count=0,
+            next_farewell_at=random.randint(4, 5),
+            violation_count=0,
+        )
+        session.add(state)
+        session.flush()
+    return state
+
+
+def reset_user_session(session: Session, user_id: int) -> UserState:
+    state = get_or_create_user_state(session, user_id)
+    state.current_section = None
+    state.current_topic = None
+    state.message_count = 0
+    state.next_farewell_at = random.randint(4, 5)
+    state.violation_count = 0
+    session.flush()
+    return state
+
+
+def set_user_context(
+    session: Session,
+    user_id: int,
+    section: str | None,
+    topic: str | None = None,
+) -> UserState:
+    state = get_or_create_user_state(session, user_id)
+    state.current_section = section
+    state.current_topic = topic
+    session.flush()
+    return state
+
+
+def register_normal_message(session: Session, user_id: int) -> bool:
+    state = get_or_create_user_state(session, user_id)
+    state.message_count += 1
+    should_add_farewell = state.message_count >= state.next_farewell_at
+    if should_add_farewell:
+        state.message_count = 0
+        state.next_farewell_at = random.randint(4, 5)
+    session.flush()
+    return should_add_farewell
+
+
+def register_violation(session: Session, user_id: int) -> int:
+    state = get_or_create_user_state(session, user_id)
+    state.violation_count += 1
+    session.flush()
+    return state.violation_count

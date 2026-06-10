@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime
 
@@ -29,6 +29,11 @@ class User(Base):
     messages: Mapped[list["Message"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
+    )
+    state: Mapped["UserState | None"] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        uselist=False,
     )
 
 
@@ -64,3 +69,22 @@ class Message(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="messages")
+
+
+class UserState(Base):
+    __tablename__ = "user_states"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    current_section: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    current_topic: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    message_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_farewell_at: Mapped[int] = mapped_column(Integer, nullable=False, default=4)
+    violation_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    user: Mapped["User"] = relationship(back_populates="state")
