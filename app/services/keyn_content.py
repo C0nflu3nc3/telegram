@@ -90,6 +90,12 @@ FINAL_VIOLATION_REPLIES = (
     "Терпение архивов не бесконечно. Кейн советует вернуться к достойному разговору, пока это возможно.",
 )
 
+_BLOCK_HEADER_RE = re.compile(r"БЛОК\s+(\d+)\s+—")
+_BLOCK_END_TEMPLATE = "КОНЕЦ БЛОКА {block_id}"
+_OVERRIDE_BLOCK_TITLES = {
+    "5": "БОНУСНАЯ СИСТЕМА",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class SectionSpec:
@@ -180,8 +186,27 @@ TOPICS_BY_SECTION = {
 SECTION_BY_BUTTON = {section.button: section.key for section in SECTIONS.values()}
 
 
-@lru_cache(maxsize=1)
-def get_keyn_database_text() -> str:
+def _file_signature(path) -> int:
+    return path.stat().st_mtime_ns if path.exists() else -1
+
+
+def _database_signature() -> tuple[int, int]:
+    settings = get_settings()
+    return (
+        _file_signature(settings.keyn_database_path),
+        _file_signature(settings.keyn_bonus_database_path),
+    )
+
+
+def clear_keyn_caches() -> None:
+    _get_base_database_text_cached.cache_clear()
+    _get_bonus_override_text_cached.cache_clear()
+    _get_keyn_blocks_cached.cache_clear()
+    _get_keyn_database_text_cached.cache_clear()
+
+
+@lru_cache(maxsize=8)
+def _get_base_database_text_cached(base_signature: int) -> str:
     settings = get_settings()
     path = settings.keyn_database_path
     if not path.exists():
@@ -189,28 +214,97 @@ def get_keyn_database_text() -> str:
     return path.read_text(encoding="utf-8").strip()
 
 
-@lru_cache(maxsize=1)
+@lru_cache(maxsize=8)
+def _get_bonus_override_text_cached(override_signature: int) -> str:
+    settings = get_settings()
+    path = settings.keyn_bonus_database_path
+    if override_signature < 0 or not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8").strip()
+
+
+@lru_cache(maxsize=8)
+def _get_keyn_blocks_cached(base_signature: int, override_signature: int) -> dict[str, str]:
+    base_text = _get_base_database_text_cached(base_signature)
+    blocks = _parse_blocks(base_text)
+    override_text = _get_bonus_override_text_cached(override_signature)
+    if override_text:
+        blocks["5"] = _normalize_override_block("5", override_text)
+    return blocks
+
+
+@lru_cache(maxsize=8)
+def _get_keyn_database_text_cached(base_signature: int, override_signature: int) -> str:
+    base_text = _get_base_database_text_cached(base_signature)
+    blocks = _get_keyn_blocks_cached(base_signature, override_signature)
+    ordered_ids = _extract_block_order(base_text)
+
+    for block_id in blocks:
+        if block_id not in ordered_ids:
+            ordered_ids.append(block_id)
+
+    return "\n\n".join(blocks[block_id].strip() for block_id in ordered_ids if blocks.get(block_id)).strip()
+
+
+def get_keyn_database_text() -> str:
+    return _get_keyn_database_text_cached(*_database_signature())
+
+
 def get_keyn_blocks() -> dict[str, str]:
-    text = get_keyn_database_text()
+    return _get_keyn_blocks_cached(*_database_signature())
+
+
+def _parse_blocks(text: str) -> dict[str, str]:
     lines = text.splitlines()
     blocks: dict[str, list[str]] = {}
     current_block: str | None = None
 
     for line in lines:
-        match = re.match(r"БЛОК\s+(\d+)\s+—", line.strip())
+        match = _BLOCK_HEADER_RE.match(line.strip())
         if match:
             current_block = match.group(1)
             blocks[current_block] = [line]
             continue
         if current_block is not None:
             blocks[current_block].append(line)
-            if line.strip() == f"КОНЕЦ БЛОКА {current_block}":
+            if line.strip() == _BLOCK_END_TEMPLATE.format(block_id=current_block):
                 current_block = None
 
     return {
         key: "\n".join(value).strip()
         for key, value in blocks.items()
     }
+
+
+def _extract_block_order(text: str) -> list[str]:
+    ordered: list[str] = []
+    for line in text.splitlines():
+        match = _BLOCK_HEADER_RE.match(line.strip())
+        if not match:
+            continue
+        block_id = match.group(1)
+        if block_id not in ordered:
+            ordered.append(block_id)
+    return ordered
+
+
+def _normalize_override_block(block_id: str, override_text: str) -> str:
+    cleaned = override_text.strip()
+    if not cleaned:
+        return cleaned
+
+    parsed = _parse_blocks(cleaned)
+    if block_id in parsed:
+        return parsed[block_id]
+
+    title = _OVERRIDE_BLOCK_TITLES.get(block_id, f"БЛОК {block_id}")
+    return (
+        "=====================================================================\n"
+        f"БЛОК {block_id} — {title}\n"
+        "=====================================================================\n\n"
+        f"{cleaned}\n\n"
+        f"КОНЕЦ БЛОКА {block_id}"
+    ).strip()
 
 
 def get_random_greeting() -> str:
