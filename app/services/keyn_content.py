@@ -95,6 +95,7 @@ _BLOCK_END_TEMPLATE = "КОНЕЦ БЛОКА {block_id}"
 _OVERRIDE_BLOCK_TITLES = {
     "5": "БОНУСНАЯ СИСТЕМА",
 }
+_INTERNAL_ONLY_BLOCKS = frozenset({"1", "7", "8"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,6 +204,7 @@ def clear_keyn_caches() -> None:
     _get_bonus_override_text_cached.cache_clear()
     _get_keyn_blocks_cached.cache_clear()
     _get_keyn_database_text_cached.cache_clear()
+    _get_prompt_block_text_cached.cache_clear()
 
 
 @lru_cache(maxsize=8)
@@ -246,12 +248,54 @@ def _get_keyn_database_text_cached(base_signature: int, override_signature: int)
     return "\n\n".join(blocks[block_id].strip() for block_id in ordered_ids if blocks.get(block_id)).strip()
 
 
+@lru_cache(maxsize=64)
+def _get_prompt_block_text_cached(base_signature: int, override_signature: int, block_id: str) -> str:
+    block = _get_keyn_blocks_cached(base_signature, override_signature).get(block_id, "")
+    if not block:
+        return ""
+
+    cleaned_lines: list[str] = []
+    for raw_line in block.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if set(line) == {"="}:
+            continue
+        if line.startswith("База знаний Кейна"):
+            continue
+        if _BLOCK_HEADER_RE.match(line):
+            continue
+        if line.startswith("КОНЕЦ БЛОКА"):
+            continue
+        cleaned_lines.append(line)
+
+    return "\n".join(cleaned_lines).strip()
+
+
 def get_keyn_database_text() -> str:
     return _get_keyn_database_text_cached(*_database_signature())
 
 
 def get_keyn_blocks() -> dict[str, str]:
     return _get_keyn_blocks_cached(*_database_signature())
+
+
+def get_prompt_knowledge(block_ids: list[str]) -> str:
+    base_signature, override_signature = _database_signature()
+    unique_ids: list[str] = []
+    for block_id in block_ids:
+        if block_id in _INTERNAL_ONLY_BLOCKS:
+            continue
+        if block_id not in unique_ids:
+            unique_ids.append(block_id)
+
+    parts: list[str] = []
+    for block_id in unique_ids:
+        text = _get_prompt_block_text_cached(base_signature, override_signature, block_id)
+        if text:
+            parts.append(f"Блок {block_id}:\n{text}")
+
+    return "\n\n".join(parts).strip()
 
 
 def _parse_blocks(text: str) -> dict[str, str]:
