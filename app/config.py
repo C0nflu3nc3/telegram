@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -35,6 +36,27 @@ def _get_float(name: str, default: float) -> float:
     return float(value) if value else default
 
 
+def _get_admin_ids() -> tuple[int, ...]:
+    raw_values: list[str] = []
+    admin_ids_value = os.getenv("ADMIN_IDS", "").strip()
+    if admin_ids_value:
+        raw_values.extend(part for part in re.split(r"[\s,;]+", admin_ids_value) if part)
+
+    single_admin_value = os.getenv("ADMIN_ID", "").strip()
+    if single_admin_value:
+        raw_values.append(single_admin_value)
+
+    unique_ids: list[int] = []
+    for raw in raw_values:
+        try:
+            user_id = int(raw)
+        except ValueError:
+            continue
+        if user_id > 0 and user_id not in unique_ids:
+            unique_ids.append(user_id)
+    return tuple(unique_ids)
+
+
 def _default_data_root() -> Path:
     railway_mount = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "").strip()
     if railway_mount:
@@ -53,7 +75,7 @@ def _resolve_path(value: str | None, default_path: Path) -> Path:
 class Settings:
     bot_token: str
     openai_api_key: str
-    admin_id: int
+    admin_ids: tuple[int, ...]
     database_path: Path
     chroma_path: Path
     upload_path: Path
@@ -76,11 +98,15 @@ class Settings:
         self.keyn_bonus_database_path.parent.mkdir(parents=True, exist_ok=True)
 
     @property
+    def admin_id(self) -> int:
+        return self.admin_ids[0] if self.admin_ids else 0
+
+    @property
     def knowledge_base_owner_id(self) -> int:
         return self.admin_id
 
     def is_admin(self, user_id: int) -> bool:
-        return self.admin_id > 0 and user_id == self.admin_id
+        return user_id in self.admin_ids
 
     def validate(self) -> None:
         missing = []
@@ -102,7 +128,7 @@ def get_settings() -> Settings:
     return Settings(
         bot_token=_get_env("TELEGRAM_BOT_TOKEN", "BOT_TOKEN"),
         openai_api_key=_get_env("OPENAI_API_KEY"),
-        admin_id=_get_int("ADMIN_ID", 0),
+        admin_ids=_get_admin_ids(),
         database_path=_resolve_path(os.getenv("DATABASE_PATH"), data_root / "app.db"),
         chroma_path=_resolve_path(os.getenv("CHROMA_PATH"), data_root / "chroma_db"),
         upload_path=_resolve_path(os.getenv("UPLOAD_PATH"), data_root / "uploads"),
