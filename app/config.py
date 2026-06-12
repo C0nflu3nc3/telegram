@@ -12,6 +12,8 @@ from dotenv import load_dotenv
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_DIR / ".env")
 
+_INDEXED_ADMIN_KEY_RE = re.compile(r"^ADMINS?_IDS?_?(\d+)$")
+
 
 def _get_env(*names: str, default: str = "") -> str:
     for name in names:
@@ -46,6 +48,16 @@ def _get_admin_ids() -> tuple[int, ...]:
     raw_values: list[str] = []
     raw_values.extend(_split_admin_values(os.getenv("ADMIN_IDS", "")))
     raw_values.extend(_split_admin_values(os.getenv("ADMIN_ID", "")))
+
+    indexed_pairs: list[tuple[int, str]] = []
+    for key, value in os.environ.items():
+        match = _INDEXED_ADMIN_KEY_RE.match(key)
+        if not match:
+            continue
+        indexed_pairs.append((int(match.group(1)), value))
+
+    for _, value in sorted(indexed_pairs, key=lambda item: item[0]):
+        raw_values.extend(_split_admin_values(value))
 
     unique_ids: list[int] = []
     for raw in raw_values:
