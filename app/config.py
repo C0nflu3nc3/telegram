@@ -36,15 +36,16 @@ def _get_float(name: str, default: float) -> float:
     return float(value) if value else default
 
 
+def _split_admin_values(raw_value: str) -> list[str]:
+    if not raw_value:
+        return []
+    return [part for part in re.split(r"[\s,;]+", raw_value.strip()) if part]
+
+
 def _get_admin_ids() -> tuple[int, ...]:
     raw_values: list[str] = []
-    admin_ids_value = os.getenv("ADMIN_IDS", "").strip()
-    if admin_ids_value:
-        raw_values.extend(part for part in re.split(r"[\s,;]+", admin_ids_value) if part)
-
-    single_admin_value = os.getenv("ADMIN_ID", "").strip()
-    if single_admin_value:
-        raw_values.append(single_admin_value)
+    raw_values.extend(_split_admin_values(os.getenv("ADMIN_IDS", "")))
+    raw_values.extend(_split_admin_values(os.getenv("ADMIN_ID", "")))
 
     unique_ids: list[int] = []
     for raw in raw_values:
