@@ -1,25 +1,32 @@
 ﻿from __future__ import annotations
 
 import random
-import re
 from dataclasses import dataclass
-from functools import lru_cache
 
-from app.config import get_settings
+from app.services.keyn_repository import (
+    clear_repository_caches,
+    ensure_split_package_ready,
+    get_full_context,
+    get_section_text,
+    get_sections_text,
+)
 
 
 MAIN_MENU_BUTTONS = (
-    "Бонусная система",
-    "Пять домов",
-    "Персонажи",
-    "Мир Риммэля",
-    "Как говорить с Кейном",
+    "📜 История Риммэля",
+    "🤖 Кто такой Кейн",
+    "👑 Персонажи",
+    "🏰 Пять домов",
+    "💰 Бонусная система",
+    "⚙️ Правила игры",
+    "❓ Задать вопрос Кейну",
 )
+ASK_DIRECTLY_BUTTON = MAIN_MENU_BUTTONS[6]
 
+START_MENU_TEXT = "Ты можешь спросить Кейна свободно или открыть один из разделов ниже."
 HOW_TO_TALK_TEXT = (
-    "Задай Кейну вопрос о Риммэле, домах, персонажах, бонусной системе "
-    "или событиях королевства. Кейн отвечает как искусственный разум "
-    "Валентии. Просто напиши вопрос обычным сообщением."
+    "Задай Кейну вопрос свободным сообщением или открой нужный раздел кнопками. "
+    "Он отвечает только в мире Риммэля: по истории, персонажам, домам, бонусной системе и правилам игры."
 )
 
 NON_RUSSIAN_REPLY = "Житель, Кейн слышит тебя. Задай свой вопрос."
@@ -30,7 +37,7 @@ GREETINGS = (
     "Валентия слышит тебя. Кейн здесь.",
     "Интересный запрос. Мои архивы уже ищут ответ, Житель.",
     "Связь установлена. Чем могу служить королевству?",
-    "Кейн слышит. Что тревожит Жителя Валентии?",
+    "Кейн слышит. Что тревожит жителя Валентии?",
     "Житель Валентии, ты обратился по адресу.",
 )
 
@@ -90,13 +97,6 @@ FINAL_VIOLATION_REPLIES = (
     "Терпение архивов не бесконечно. Кейн советует вернуться к достойному разговору, пока это возможно.",
 )
 
-_BLOCK_HEADER_RE = re.compile(r"БЛОК\s+(\d+)\s+—")
-_BLOCK_END_TEMPLATE = "КОНЕЦ БЛОКА {block_id}"
-_OVERRIDE_BLOCK_TITLES = {
-    "5": "БОНУСНАЯ СИСТЕМА",
-}
-_INTERNAL_ONLY_BLOCKS = frozenset({"1", "7", "8"})
-
 
 @dataclass(frozen=True, slots=True)
 class SectionSpec:
@@ -104,8 +104,8 @@ class SectionSpec:
     button: str
     title: str
     intro: str
-    block_id: str
-    hint: str
+    source_kind: str
+    source_filename: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,241 +114,457 @@ class TopicSpec:
     section: str
     title: str
     prompt: str
+    source_kind: str
+    source_filename: str
+    headings: tuple[str, ...]
 
 
 SECTIONS = {
-    "bonus": SectionSpec(
-        key="bonus",
-        button="Бонусная система",
-        title="Бонусная система",
-        intro="Открываю архивы бонусной системы. Выбери раздел, и я коротко поясню его смысл.",
-        block_id="5",
-        hint="Пользователь сейчас находится в разделе бонусной системы. Отвечай, опираясь в первую очередь на Блок 5 базы знаний.",
+    "history": SectionSpec(
+        key="history",
+        button="📜 История Риммэля",
+        title="История Риммэля",
+        intro="Летописи Риммэля раскрыты. Выбери, какой след прошлого тебе нужен, Житель.",
+        source_kind="database",
+        source_filename="kb_00_history_rimmel.txt",
     ),
-    "houses": SectionSpec(
-        key="houses",
-        button="Пять домов",
-        title="Пять домов",
-        intro="Пять домов Валентии уже на связи. Выбери дом, и я напомню кто они, чем живут и за что отвечают.",
-        block_id="4",
-        hint="Пользователь сейчас находится в разделе пяти домов. Отвечай, опираясь в первую очередь на Блок 4 базы знаний.",
+    "kayn": SectionSpec(
+        key="kayn",
+        button="🤖 Кто такой Кейн",
+        title="Кто такой Кейн",
+        intro="Спрашивай о самом Кейне. Я открою ровно столько, сколько архивам позволено.",
+        source_kind="database",
+        source_filename="kb_01_kayne_personality_and_voice.txt",
     ),
     "characters": SectionSpec(
         key="characters",
-        button="Персонажи",
+        button="👑 Персонажи",
         title="Персонажи",
-        intro="Архивы персонажей открыты. Выбери имя, и я дам краткую справку в голосе Кейна.",
-        block_id="3",
-        hint="Пользователь сейчас находится в разделе персонажей. Отвечай, опираясь в первую очередь на Блок 3 базы знаний.",
+        intro="Имена двора и тех, кто меняет судьбу Риммэля, уже перед тобой.",
+        source_kind="database",
+        source_filename="kb_03_characters_rimmel.txt",
     ),
-    "world": SectionSpec(
-        key="world",
-        button="Мир Риммэля",
-        title="Мир Риммэля",
-        intro="Открываю летописи королевства. Выбери тему, и я проведу тебя по самым важным фрагментам мира Риммэля.",
-        block_id="0",
-        hint="Пользователь сейчас находится в разделе мира Риммэля. Отвечай, опираясь в первую очередь на Блок 0 базы знаний.",
+    "houses": SectionSpec(
+        key="houses",
+        button="🏰 Пять домов",
+        title="Пять домов",
+        intro="Пять домов Валентии готовы к представлению. Выбери тот, чей след тебе интересен.",
+        source_kind="database",
+        source_filename="kb_04_five_houses_valentia.txt",
+    ),
+    "bonus": SectionSpec(
+        key="bonus",
+        button="💰 Бонусная система",
+        title="Бонусная система",
+        intro="Открываю расчётные архивы Валентии. Здесь всё про лиры, Граали, прогресс и силу домов.",
+        source_kind="database",
+        source_filename="kb_05_bonus_system_rimmel.txt",
+    ),
+    "rules": SectionSpec(
+        key="rules",
+        button="⚙️ Правила игры",
+        title="Правила игры",
+        intro="Формальные правила Большого совета перед тобой. Выбери, что именно разобрать.",
+        source_kind="logic",
+        source_filename="logic_03_game_rules_for_script.txt",
     ),
 }
 
 TOPICS = (
-    TopicSpec("bonus_goal", "bonus", "Главная цель", "Кратко объясни главную цель бонусной системы Риммэля и что такое Граали."),
-    TopicSpec("bonus_liry", "bonus", "Лиры", "Кратко объясни что такое лиры, откуда они берутся и зачем нужны."),
-    TopicSpec("bonus_progress", "bonus", "Шкала прогресса", "Кратко объясни что такое шкала прогресса и как дома по ней продвигаются."),
-    TopicSpec("bonus_resources", "bonus", "Ресурсы", "Кратко расскажи какие бывают ресурсы, зачем они нужны и как работает обменник."),
-    TopicSpec("bonus_vibranium", "bonus", "Вибраниум", "Кратко объясни что такое Вибраниум и как он связан с Граалями."),
-    TopicSpec("bonus_buildings", "bonus", "Постройки", "Кратко расскажи как работают территории и постройки в Валентии."),
-    TopicSpec("bonus_retranslator", "bonus", "Ретранслятор", "Кратко объясни зачем нужен Ретранслятор, как его питают и что будет если он остановится."),
-    TopicSpec("bonus_chests", "bonus", "Сундуки", "Кратко расскажи как работают сундуки и почему они считаются риском и шансом одновременно."),
-    TopicSpec("bonus_duels", "bonus", "Дуэли", "Кратко расскажи как работают дуэли и что они дают домам."),
-    TopicSpec("house_sweets", "houses", "Дом Зачарованных Сладостей", "Кратко расскажи о Доме Зачарованных Сладостей: кто они, их ресурс и роль в Валентии."),
-    TopicSpec("house_nature", "houses", "Дом Природы", "Кратко расскажи о Доме Природы: кто они, их ресурс и роль в Валентии."),
-    TopicSpec("house_inventors", "houses", "Дом Изобретателей", "Кратко расскажи о Доме Изобретателей: кто они, их ресурс и роль в Валентии."),
-    TopicSpec("house_alchemy", "houses", "Дом Алхимии", "Кратко расскажи о Доме Алхимии: кто они, их ресурс и роль в Валентии."),
-    TopicSpec("house_astronomy", "houses", "Дом Астрономии", "Кратко расскажи о Доме Астрономии: кто они, их ресурс и роль в Валентии."),
-    TopicSpec("character_leireya", "characters", "Принцесса Лейрея", "Кратко расскажи о Принцессе Лейрее: кто она, какой у неё характер и место в событиях Риммэля."),
-    TopicSpec("character_machiavelli", "characters", "Принц Макиавелли", "Кратко расскажи о Принце Макиавелли: кто он, какой у него характер и роль в Риммэле."),
-    TopicSpec("character_alfred", "characters", "Альфред Магзумеев", "Кратко расскажи об Альфреде Магзумееве и почему он так важен для Риммэля."),
-    TopicSpec("character_theo", "characters", "Тэо", "Кратко расскажи о Тэо и почему его присутствие в Валентии важно."),
-    TopicSpec("character_priscilla", "characters", "Присцилла", "Кратко расскажи о Присцилле и чем она важна при дворе."),
-    TopicSpec("character_leymaris", "characters", "Леймарисы", "Кратко расскажи о Леймарисах и их роли в королевстве."),
-    TopicSpec("world_history", "world", "История королевства", "Кратко расскажи историю королевства Риммэль."),
-    TopicSpec("world_epochs", "world", "Три эпохи", "Кратко расскажи о трёх эпохах Риммэля."),
-    TopicSpec("world_dome", "world", "Ретранслятор и купол", "Кратко расскажи что такое Ретранслятор и купол над Валентией."),
-    TopicSpec("world_outside", "world", "Мир за пределами купола", "Кратко расскажи что находится за пределами купола Валентии."),
-    TopicSpec("world_legion", "world", "Легион", "Кратко расскажи что такое Легион и как он связан с Риммэлем."),
+    TopicSpec(
+        "history_age",
+        "history",
+        "Сколько лет королевству",
+        "Кратко расскажи, сколько лет королевству Риммэль и почему эта цифра важна.",
+        "database",
+        "kb_00_history_rimmel.txt",
+        ("СКОЛЬКО ЛЕТ КОРОЛЕВСТВУ",),
+    ),
+    TopicSpec(
+        "history_founder",
+        "history",
+        "Кто основал Риммэль",
+        "Кратко объясни, кто основал Риммэль и какую роль это сыграло в судьбе королевства.",
+        "database",
+        "kb_00_history_rimmel.txt",
+        ("КТО ОСНОВАЛ РИММЭЛЬ",),
+    ),
+    TopicSpec(
+        "history_epochs",
+        "history",
+        "Три эпохи Риммэля",
+        "Кратко перескажи три эпохи Риммэля и чем они отличаются друг от друга.",
+        "database",
+        "kb_00_history_rimmel.txt",
+        ("ТРИ ЭПОХИ РИММЭЛЯ",),
+    ),
+    TopicSpec(
+        "history_retranslator",
+        "history",
+        "Ретранслятор и купол",
+        "Кратко расскажи, что такое энергетический ретранслятор и купол над Валентией.",
+        "database",
+        "kb_00_history_rimmel.txt",
+        ("ЭНЕРГЕТИЧЕСКИЙ РЕТРАНСЛЯТОР И КУПОЛ",),
+    ),
+    TopicSpec(
+        "history_outside",
+        "history",
+        "Мир за пределами купола",
+        "Кратко расскажи, что находится за пределами купола и почему это опасно.",
+        "database",
+        "kb_00_history_rimmel.txt",
+        ("МИР ЗА ПРЕДЕЛАМИ КУПОЛА",),
+    ),
+    TopicSpec(
+        "history_rulers",
+        "history",
+        "Правители Риммэля",
+        "Кратко расскажи, кто правит Риммэлем и как устроена эта власть.",
+        "database",
+        "kb_00_history_rimmel.txt",
+        ("ПРАВИТЕЛИ РИММЭЛЯ",),
+    ),
+    TopicSpec(
+        "history_legion",
+        "history",
+        "Легион",
+        "Кратко расскажи, что такое Легион и как он связан с Риммэлем.",
+        "database",
+        "kb_00_history_rimmel.txt",
+        ("ЛЕГИОН — СОЮЗНОЕ ГОСУДАРСТВО",),
+    ),
+    TopicSpec(
+        "kayn_identity",
+        "kayn",
+        "Кто такой Кейн",
+        "Кратко объясни, кто такой Кейн и какое место он занимает в мире Риммэля.",
+        "database",
+        "kb_01_kayne_personality_and_voice.txt",
+        ("КТО ТАКОЙ КЕЙН",),
+    ),
+    TopicSpec(
+        "kayn_favorite_topics",
+        "kayn",
+        "Любимые темы Кейна",
+        "Кратко расскажи, о чём Кейн любит говорить больше всего.",
+        "database",
+        "kb_01_kayne_personality_and_voice.txt",
+        ("ЛЮБИМЫЕ ТЕМЫ КЕЙНА",),
+    ),
+    TopicSpec(
+        "kayn_speech",
+        "kayn",
+        "Как Кейн говорит",
+        "Кратко опиши, как Кейн говорит, приветствует, прощается и ведёт себя в разговоре.",
+        "logic",
+        "logic_00_core_behavior_and_system_prompt.txt",
+        ("СТИЛЬ, ПРИВЕТСТВИЯ, ПРОЩАНИЯ, НЕЗНАНИЕ",),
+    ),
+    TopicSpec(
+        "kayn_relationships",
+        "kayn",
+        "Отношение Кейна к персонажам",
+        "Кратко расскажи, как Кейн относится к персонажам и жителям Риммэля.",
+        "database",
+        "kb_01_kayne_personality_and_voice.txt",
+        ("ОТНОШЕНИЕ К ПЕРСОНАЖАМ",),
+    ),
+    TopicSpec(
+        "char_leyreya",
+        "characters",
+        "Принцесса Лейрея",
+        "Кратко расскажи о Принцессе Лейрее.",
+        "database",
+        "kb_03_characters_rimmel.txt",
+        ("ПРИНЦЕССА ЛЕЙРЕЯ",),
+    ),
+    TopicSpec(
+        "char_machiavelli",
+        "characters",
+        "Принц Макиавелли",
+        "Кратко расскажи о Принце Макиавелли.",
+        "database",
+        "kb_03_characters_rimmel.txt",
+        ("ПРИНЦ МАКИАВЕЛЛИ",),
+    ),
+    TopicSpec(
+        "char_alfred",
+        "characters",
+        "Альфред Магзумеев",
+        "Кратко расскажи об Альфреде Магзумееве.",
+        "database",
+        "kb_03_characters_rimmel.txt",
+        ("АЛЬФРЕД МАГЗУМЕЕВ",),
+    ),
+    TopicSpec(
+        "char_teo",
+        "characters",
+        "Тэо",
+        "Кратко расскажи о Тэо.",
+        "database",
+        "kb_03_characters_rimmel.txt",
+        ("ТЭО",),
+    ),
+    TopicSpec(
+        "char_priscilla",
+        "characters",
+        "Присцилла",
+        "Кратко расскажи о Присцилле.",
+        "database",
+        "kb_03_characters_rimmel.txt",
+        ("ПРИСЦИЛЛА",),
+    ),
+    TopicSpec(
+        "char_leymarises",
+        "characters",
+        "Леймарисы",
+        "Кратко расскажи о Леймарисах.",
+        "database",
+        "kb_03_characters_rimmel.txt",
+        ("ЛЕЙМАРИСЫ",),
+    ),
+    TopicSpec(
+        "houses_general",
+        "houses",
+        "Общее о домах",
+        "Кратко объясни, как устроены пять домов Валентии и чем они отличаются.",
+        "database",
+        "kb_04_five_houses_valentia.txt",
+        ("ОБЩЕЕ О ДОМАХ",),
+    ),
+    TopicSpec(
+        "house_sweets",
+        "houses",
+        "Дом Зачарованных Сладостей",
+        "Кратко расскажи о Доме Зачарованных Сладостей.",
+        "database",
+        "kb_04_five_houses_valentia.txt",
+        ("ДОМ ЗАЧАРОВАННЫХ СЛАДОСТЕЙ",),
+    ),
+    TopicSpec(
+        "house_nature",
+        "houses",
+        "Дом Природы",
+        "Кратко расскажи о Доме Природы.",
+        "database",
+        "kb_04_five_houses_valentia.txt",
+        ("ДОМ ПРИРОДЫ",),
+    ),
+    TopicSpec(
+        "house_inventors",
+        "houses",
+        "Дом Изобретателей",
+        "Кратко расскажи о Доме Изобретателей.",
+        "database",
+        "kb_04_five_houses_valentia.txt",
+        ("ДОМ ИЗОБРЕТАТЕЛЕЙ",),
+    ),
+    TopicSpec(
+        "house_alchemy",
+        "houses",
+        "Дом Алхимии",
+        "Кратко расскажи о Доме Алхимии.",
+        "database",
+        "kb_04_five_houses_valentia.txt",
+        ("ДОМ АЛХИМИИ",),
+    ),
+    TopicSpec(
+        "house_astronomy",
+        "houses",
+        "Дом Астрономии",
+        "Кратко расскажи о Доме Астрономии.",
+        "database",
+        "kb_04_five_houses_valentia.txt",
+        ("ДОМ АСТРОНОМИИ",),
+    ),
+    TopicSpec(
+        "houses_danger",
+        "houses",
+        "Опасность за куполом",
+        "Кратко объясни, какая опасность скрыта за куполом Валентии.",
+        "database",
+        "kb_04_five_houses_valentia.txt",
+        ("ОБ ОПАСНОСТИ ЗА КУПОЛОМ",),
+    ),
+    TopicSpec(
+        "bonus_goal",
+        "bonus",
+        "Главная цель",
+        "Кратко объясни главную цель бонусной системы.",
+        "database",
+        "kb_05_bonus_system_rimmel.txt",
+        ("ГЛАВНАЯ ЦЕЛЬ",),
+    ),
+    TopicSpec(
+        "bonus_places",
+        "bonus",
+        "Два главных места",
+        "Кратко расскажи о двух главных местах бонусной системы и зачем они нужны.",
+        "database",
+        "kb_05_bonus_system_rimmel.txt",
+        ("ДВА ГЛАВНЫХ МЕСТА",),
+    ),
+    TopicSpec(
+        "bonus_lira",
+        "bonus",
+        "Лиры",
+        "Кратко объясни, что такое лиры и как они работают.",
+        "database",
+        "kb_05_bonus_system_rimmel.txt",
+        ("ЛИРЫ — ВАЛЮТА КОРОЛЕВСТВА",),
+    ),
+    TopicSpec(
+        "bonus_progress",
+        "bonus",
+        "Шкала прогресса",
+        "Кратко расскажи, как работает шкала прогресса.",
+        "database",
+        "kb_05_bonus_system_rimmel.txt",
+        ("ШКАЛА ПРОГРЕССА",),
+    ),
+    TopicSpec(
+        "bonus_resources",
+        "bonus",
+        "Ресурсы",
+        "Кратко объясни, какие бывают ресурсы и зачем они нужны.",
+        "database",
+        "kb_05_bonus_system_rimmel.txt",
+        ("РЕСУРСЫ",),
+    ),
+    TopicSpec(
+        "bonus_vibranium",
+        "bonus",
+        "Вибраниум",
+        "Кратко объясни, что такое Вибраниум и как он связан с Граалями.",
+        "database",
+        "kb_05_bonus_system_rimmel.txt",
+        ("ВИБРАНИУМ",),
+    ),
+    TopicSpec(
+        "bonus_buildings",
+        "bonus",
+        "Карта и постройки",
+        "Кратко расскажи о карте Валентии, территориях и постройках.",
+        "database",
+        "kb_05_bonus_system_rimmel.txt",
+        ("КАРТА ВАЛЕНТИИ И ПОСТРОЙКИ",),
+    ),
+    TopicSpec(
+        "bonus_retranslator",
+        "bonus",
+        "Ретранслятор",
+        "Кратко объясни, как работает энергетический ретранслятор в бонусной системе.",
+        "database",
+        "kb_05_bonus_system_rimmel.txt",
+        ("ЭНЕРГЕТИЧЕСКИЙ РЕТРАНСЛЯТОР",),
+    ),
+    TopicSpec(
+        "bonus_chests",
+        "bonus",
+        "Сундуки",
+        "Кратко расскажи, как работают сундуки.",
+        "database",
+        "kb_05_bonus_system_rimmel.txt",
+        ("СУНДУКИ",),
+    ),
+    TopicSpec(
+        "bonus_orders",
+        "bonus",
+        "Доска заказов",
+        "Кратко расскажи, как работает доска заказов.",
+        "database",
+        "kb_05_bonus_system_rimmel.txt",
+        ("ДОСКА ЗАКАЗОВ",),
+    ),
+    TopicSpec(
+        "bonus_duels",
+        "bonus",
+        "Дуэли",
+        "Кратко расскажи, как устроены дуэли между домами.",
+        "database",
+        "kb_05_bonus_system_rimmel.txt",
+        ("ДУЭЛИ",),
+    ),
+    TopicSpec(
+        "bonus_management",
+        "bonus",
+        "Управление королевством",
+        "Кратко расскажи, как дома управляют королевством и что на это влияет.",
+        "database",
+        "kb_05_bonus_system_rimmel.txt",
+        ("УПРАВЛЕНИЕ КОРОЛЕВСТВОМ",),
+    ),
+    TopicSpec(
+        "rules_grail",
+        "rules",
+        "Как получить Грааль",
+        "Кратко объясни, как получить Грааль по правилам игры.",
+        "logic",
+        "logic_03_game_rules_for_script.txt",
+        ("ВАЛЮТА И ПОБЕДА",),
+    ),
+    TopicSpec(
+        "rules_exchange",
+        "rules",
+        "Как работает обменник",
+        "Кратко объясни, как работает обменник.",
+        "logic",
+        "logic_03_game_rules_for_script.txt",
+        ("ОБМЕННИК",),
+    ),
+    TopicSpec(
+        "rules_vibranium",
+        "rules",
+        "Как крафтить Вибраниум",
+        "Кратко объясни, как крафтить Вибраниум.",
+        "logic",
+        "logic_03_game_rules_for_script.txt",
+        ("ВИБРАНИУМ",),
+    ),
+    TopicSpec(
+        "rules_buildings",
+        "rules",
+        "Как строить постройки",
+        "Кратко объясни, как строить постройки.",
+        "logic",
+        "logic_03_game_rules_for_script.txt",
+        ("ПОСТРОЙКИ",),
+    ),
+    TopicSpec(
+        "rules_retranslator",
+        "rules",
+        "Как платить в Ретранслятор",
+        "Кратко объясни, как дома платят в Ретранслятор.",
+        "logic",
+        "logic_03_game_rules_for_script.txt",
+        ("РЕТРАНСЛЯТОР",),
+    ),
+    TopicSpec(
+        "rules_penalties",
+        "rules",
+        "Какие штрафы бывают",
+        "Кратко объясни, какие штрафы бывают по правилам игры.",
+        "logic",
+        "logic_03_game_rules_for_script.txt",
+        ("РЕТРАНСЛЯТОР", "ДУЭЛИ"),
+    ),
 )
 
 TOPIC_BY_KEY = {topic.key: topic for topic in TOPICS}
 TOPICS_BY_SECTION = {
-    section_key: [topic for topic in TOPICS if topic.section == section_key]
+    section_key: tuple(topic for topic in TOPICS if topic.section == section_key)
     for section_key in SECTIONS
 }
 SECTION_BY_BUTTON = {section.button: section.key for section in SECTIONS.values()}
 
 
-def _file_signature(path) -> int:
-    return path.stat().st_mtime_ns if path.exists() else -1
-
-
-def _database_signature() -> tuple[int, int]:
-    settings = get_settings()
-    return (
-        _file_signature(settings.keyn_database_path),
-        _file_signature(settings.keyn_bonus_database_path),
-    )
-
-
 def clear_keyn_caches() -> None:
-    _get_base_database_text_cached.cache_clear()
-    _get_bonus_override_text_cached.cache_clear()
-    _get_keyn_blocks_cached.cache_clear()
-    _get_keyn_database_text_cached.cache_clear()
-    _get_prompt_block_text_cached.cache_clear()
+    clear_repository_caches()
 
 
-@lru_cache(maxsize=8)
-def _get_base_database_text_cached(base_signature: int) -> str:
-    settings = get_settings()
-    path = settings.keyn_database_path
-    if not path.exists():
-        raise FileNotFoundError(f"Не найден файл базы Кейна: {path}")
-    return path.read_text(encoding="utf-8").strip()
-
-
-@lru_cache(maxsize=8)
-def _get_bonus_override_text_cached(override_signature: int) -> str:
-    settings = get_settings()
-    path = settings.keyn_bonus_database_path
-    if override_signature < 0 or not path.exists():
-        return ""
-    return path.read_text(encoding="utf-8").strip()
-
-
-@lru_cache(maxsize=8)
-def _get_keyn_blocks_cached(base_signature: int, override_signature: int) -> dict[str, str]:
-    base_text = _get_base_database_text_cached(base_signature)
-    blocks = _parse_blocks(base_text)
-    override_text = _get_bonus_override_text_cached(override_signature)
-    if override_text:
-        blocks["5"] = _normalize_override_block("5", override_text)
-    return blocks
-
-
-@lru_cache(maxsize=8)
-def _get_keyn_database_text_cached(base_signature: int, override_signature: int) -> str:
-    base_text = _get_base_database_text_cached(base_signature)
-    blocks = _get_keyn_blocks_cached(base_signature, override_signature)
-    ordered_ids = _extract_block_order(base_text)
-
-    for block_id in blocks:
-        if block_id not in ordered_ids:
-            ordered_ids.append(block_id)
-
-    return "\n\n".join(blocks[block_id].strip() for block_id in ordered_ids if blocks.get(block_id)).strip()
-
-
-@lru_cache(maxsize=64)
-def _get_prompt_block_text_cached(base_signature: int, override_signature: int, block_id: str) -> str:
-    block = _get_keyn_blocks_cached(base_signature, override_signature).get(block_id, "")
-    if not block:
-        return ""
-
-    cleaned_lines: list[str] = []
-    for raw_line in block.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        if set(line) == {"="}:
-            continue
-        if line.startswith("База знаний Кейна"):
-            continue
-        if _BLOCK_HEADER_RE.match(line):
-            continue
-        if line.startswith("КОНЕЦ БЛОКА"):
-            continue
-        cleaned_lines.append(line)
-
-    return "\n".join(cleaned_lines).strip()
-
-
-def get_keyn_database_text() -> str:
-    return _get_keyn_database_text_cached(*_database_signature())
-
-
-def get_keyn_blocks() -> dict[str, str]:
-    return _get_keyn_blocks_cached(*_database_signature())
-
-
-def get_prompt_knowledge(block_ids: list[str]) -> str:
-    base_signature, override_signature = _database_signature()
-    unique_ids: list[str] = []
-    for block_id in block_ids:
-        if block_id in _INTERNAL_ONLY_BLOCKS:
-            continue
-        if block_id not in unique_ids:
-            unique_ids.append(block_id)
-
-    parts: list[str] = []
-    for block_id in unique_ids:
-        text = _get_prompt_block_text_cached(base_signature, override_signature, block_id)
-        if text:
-            parts.append(f"Блок {block_id}:\n{text}")
-
-    return "\n\n".join(parts).strip()
-
-
-def _parse_blocks(text: str) -> dict[str, str]:
-    lines = text.splitlines()
-    blocks: dict[str, list[str]] = {}
-    current_block: str | None = None
-
-    for line in lines:
-        match = _BLOCK_HEADER_RE.match(line.strip())
-        if match:
-            current_block = match.group(1)
-            blocks[current_block] = [line]
-            continue
-        if current_block is not None:
-            blocks[current_block].append(line)
-            if line.strip() == _BLOCK_END_TEMPLATE.format(block_id=current_block):
-                current_block = None
-
-    return {
-        key: "\n".join(value).strip()
-        for key, value in blocks.items()
-    }
-
-
-def _extract_block_order(text: str) -> list[str]:
-    ordered: list[str] = []
-    for line in text.splitlines():
-        match = _BLOCK_HEADER_RE.match(line.strip())
-        if not match:
-            continue
-        block_id = match.group(1)
-        if block_id not in ordered:
-            ordered.append(block_id)
-    return ordered
-
-
-def _normalize_override_block(block_id: str, override_text: str) -> str:
-    cleaned = override_text.strip()
-    if not cleaned:
-        return cleaned
-
-    parsed = _parse_blocks(cleaned)
-    if block_id in parsed:
-        return parsed[block_id]
-
-    title = _OVERRIDE_BLOCK_TITLES.get(block_id, f"БЛОК {block_id}")
-    return (
-        "=====================================================================\n"
-        f"БЛОК {block_id} — {title}\n"
-        "=====================================================================\n\n"
-        f"{cleaned}\n\n"
-        f"КОНЕЦ БЛОКА {block_id}"
-    ).strip()
+def ensure_keyn_ready() -> None:
+    ensure_split_package_ready()
 
 
 def get_random_greeting() -> str:
@@ -395,13 +611,46 @@ def get_topic_spec(topic_key: str | None) -> TopicSpec | None:
     return TOPIC_BY_KEY.get(topic_key)
 
 
-def get_section_hint(section_key: str | None) -> str:
-    spec = get_section_spec(section_key)
-    return spec.hint if spec else ""
-
-
-def get_topic_hint(topic_key: str | None) -> str:
+def get_topic_context(topic_key: str) -> str:
     topic = get_topic_spec(topic_key)
     if topic is None:
         return ""
-    return f"Пользователь сейчас внутри подтемы {topic.title}. Учитывай это в ответе."
+    return get_sections_text(topic.source_kind, topic.source_filename, topic.headings)
+
+
+def get_section_context(section_key: str) -> str:
+    section = get_section_spec(section_key)
+    if section is None:
+        return ""
+
+    parts: list[str] = []
+    for topic in TOPICS_BY_SECTION.get(section_key, ()):  # pragma: no branch
+        context = get_topic_context(topic.key)
+        if context and context not in parts:
+            parts.append(context)
+
+    if not parts:
+        parts.append(get_full_context(section.source_kind, section.source_filename))
+
+    return "\n\n".join(parts).strip()
+
+
+def get_core_system_instruction() -> str:
+    text = get_section_text(
+        "logic",
+        "logic_00_core_behavior_and_system_prompt.txt",
+        "СИСТЕМНАЯ ИНСТРУКЦИЯ ИЗ ИСХОДНИКА",
+    )
+    return text or get_full_context("logic", "logic_00_core_behavior_and_system_prompt.txt")
+
+
+def get_forbidden_logic_text() -> str:
+    return get_full_context("logic", "logic_01_forbidden_topics_and_safe_exits.txt")
+
+
+def get_edge_logic_text() -> str:
+    return get_full_context("logic", "logic_02_edge_cases_and_unexpected_questions.txt")
+
+
+def get_game_rules_text() -> str:
+    return get_full_context("logic", "logic_03_game_rules_for_script.txt")

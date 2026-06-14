@@ -20,18 +20,17 @@ from app.database.crud import (
 from app.database.db import get_session
 from app.services.conversation_intents import detect_conversation_intent
 from app.services.keyn_content import (
-    HOW_TO_TALK_TEXT,
-    MAIN_MENU_BUTTONS,
+    ASK_DIRECTLY_BUTTON,
     SECTION_BY_BUTTON,
     clear_keyn_caches,
     get_random_farewell,
-    get_random_unknown_answer,
     get_random_violation_reply,
     get_section_spec,
     get_topic_spec,
 )
 from app.services.keyn_keyboard import BACK_TO_MENU_CALLBACK, TOPIC_CALLBACK_PREFIX, build_main_menu, build_section_keyboard
 from app.services.keyn_logic import (
+    detect_edge_case_response,
     detect_forbidden_topic_kind,
     detect_violation_kind,
     ensure_keyn_ready,
@@ -45,11 +44,17 @@ from app.services.keyn_logic import (
 
 
 router = Router()
-_HELP_BUTTON_TEXT = MAIN_MENU_BUTTONS[4]
 
 
 class BonusUploadState(StatesGroup):
     waiting_for_bonus_content = State()
+
+
+def _missing_database_text() -> str:
+    return (
+        "Архивы Кейна пока не собраны. "
+        "Администратору нужно добавить в проект папки database, logic и interface со всеми файлами."
+    )
 
 
 @router.message(Command("load_bonus"))
@@ -63,8 +68,8 @@ async def command_load_bonus(message: Message, state: FSMContext) -> None:
 
     await state.set_state(BonusUploadState.waiting_for_bonus_content)
     await message.answer(
-        "Отправь новый файл бонусной системы в формате TXT или просто пришли текст сообщением. "
-        "Я заменю только бонусный архив, не трогая остальную базу.\n\n"
+        "Отправь новый TXT-файл бонусной системы или просто пришли текст сообщением. "
+        "Я заменю только бонусный архив, не трогая остальные свитки.\n\n"
         "Если передумаешь, используй /cancel.",
         reply_markup=build_main_menu(),
     )
@@ -106,7 +111,7 @@ async def handle_bonus_document(message: Message, state: FSMContext) -> None:
     await _save_bonus_override(text)
     await state.clear()
     await message.answer(
-        "Бонусный архив обновлён. Кейн уже будет отвечать по новой версии бонусной системы.",
+        "Бонусный архив обновлён. Кейн уже будет отвечать по новой версии правил.",
         reply_markup=build_main_menu(),
     )
 
@@ -184,20 +189,19 @@ async def handle_topic_callback(callback: CallbackQuery) -> None:
     except FileNotFoundError:
         await callback.answer()
         if callback.message:
-            await callback.message.answer(
-                "Архивы Кейна пока не найдены. Администратору нужно добавить keyn_start_database.txt.",
-                reply_markup=build_main_menu(),
-            )
+            await callback.message.answer(_missing_database_text(), reply_markup=build_main_menu())
         return
 
     with get_session() as session:
         upsert_user(session, callback.from_user.id, callback.from_user.username, callback.from_user.full_name)
         set_user_context(session, callback.from_user.id, topic.section, topic.key)
 
-    answer = generate_topic_answer(topic_key)
+    answer = _append_farewell_if_needed(callback.from_user.id, generate_topic_answer(topic_key))
+    _store_dialog(callback.from_user.id, f"[topic] {topic.title}", answer)
+
     await callback.answer()
     if callback.message:
-        await callback.message.answer(answer)
+        await callback.message.answer(answer, reply_markup=build_section_keyboard(topic.section))
 
 
 @router.message(StateFilter(None), F.text, ~F.text.startswith("/"))
@@ -213,10 +217,7 @@ async def handle_text(message: Message) -> None:
     try:
         ensure_keyn_ready()
     except FileNotFoundError:
-        await message.answer(
-            "Архивы Кейна пока не найдены. Администратору нужно добавить keyn_start_database.txt.",
-            reply_markup=build_main_menu(),
-        )
+        await message.answer(_missing_database_text(), reply_markup=build_main_menu())
         return
 
     user = message.from_user
@@ -230,7 +231,6 @@ async def handle_text(message: Message) -> None:
         section_key = SECTION_BY_BUTTON[text]
         section = get_section_spec(section_key)
         if section is None:
-            await message.answer(get_random_unknown_answer(), reply_markup=build_main_menu())
             return
 
         with get_session() as session:
@@ -239,25 +239,21 @@ async def handle_text(message: Message) -> None:
         await message.answer(section.intro, reply_markup=build_section_keyboard(section_key))
         return
 
-    if text == _HELP_BUTTON_TEXT:
-        await message.answer(HOW_TO_TALK_TEXT, reply_markup=build_main_menu())
+    if text == ASK_DIRECTLY_BUTTON:
+        with get_session() as session:
+            set_user_context(session, user.id, None, None)
+        await message.answer("Архивы открыты. Говори, Житель.", reply_markup=build_main_menu())
         return
 
     if not is_russian_text(text):
-        answer = get_non_russian_reply()
+        answer = _append_farewell_if_needed(user.id, get_non_russian_reply())
         _store_dialog(user.id, text, answer)
         await message.answer(answer)
         return
 
-    quick_response = detect_conversation_intent(text)
-    if quick_response:
-        _store_dialog(user.id, text, quick_response)
-        await message.answer(quick_response)
-        return
-
     violation_kind = detect_violation_kind(text)
     if violation_kind == "broken_signal":
-        answer = get_broken_signal_reply()
+        answer = _append_farewell_if_needed(user.id, get_broken_signal_reply())
         _store_dialog(user.id, text, answer)
         await message.answer(answer)
         return
@@ -265,15 +261,28 @@ async def handle_text(message: Message) -> None:
     if violation_kind == "violation":
         with get_session() as session:
             level = register_violation(session, user.id)
-        answer = get_random_violation_reply(level)
+        answer = _append_farewell_if_needed(user.id, get_random_violation_reply(level))
         _store_dialog(user.id, text, answer)
         await message.answer(answer)
         return
 
     forbidden_kind = detect_forbidden_topic_kind(text)
     if forbidden_kind:
-        answer = get_forbidden_topic_reply(forbidden_kind)
-        answer = _append_farewell_if_needed(user.id, answer)
+        answer = _append_farewell_if_needed(user.id, get_forbidden_topic_reply(forbidden_kind))
+        _store_dialog(user.id, text, answer)
+        await message.answer(answer)
+        return
+
+    quick_response = detect_conversation_intent(text)
+    if quick_response:
+        answer = _append_farewell_if_needed(user.id, quick_response)
+        _store_dialog(user.id, text, answer)
+        await message.answer(answer)
+        return
+
+    edge_response = detect_edge_case_response(text)
+    if edge_response:
+        answer = _append_farewell_if_needed(user.id, edge_response)
         _store_dialog(user.id, text, answer)
         await message.answer(answer)
         return

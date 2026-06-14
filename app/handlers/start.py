@@ -7,7 +7,7 @@ from aiogram.types import Message
 from app.config import get_settings
 from app.database.crud import reset_user_session, upsert_user
 from app.database.db import get_session
-from app.services.keyn_content import HOW_TO_TALK_TEXT, get_random_greeting
+from app.services.keyn_content import HOW_TO_TALK_TEXT, START_MENU_TEXT, get_random_greeting
 from app.services.keyn_keyboard import build_main_menu
 from app.services.keyn_logic import ensure_keyn_ready
 
@@ -17,8 +17,8 @@ router = Router()
 
 def _missing_database_text() -> str:
     return (
-        "Архивы Кейна пока не найдены. "
-        "Администратору нужно добавить файл keyn_start_database.txt в корень проекта."
+        "Архивы Кейна пока не собраны. "
+        "Администратору нужно добавить в проект папки database, logic и interface со всеми файлами."
     )
 
 
@@ -38,7 +38,10 @@ async def command_start(message: Message) -> None:
         upsert_user(session, user.id, user.username, user.full_name)
         reset_user_session(session, user.id)
 
-    await message.answer(get_random_greeting(), reply_markup=build_main_menu())
+    await message.answer(
+        f"{get_random_greeting()}\n\n{START_MENU_TEXT}",
+        reply_markup=build_main_menu(),
+    )
 
 
 @router.message(Command("help"))

@@ -108,6 +108,7 @@ class Settings:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self.chroma_path.mkdir(parents=True, exist_ok=True)
         self.upload_path.mkdir(parents=True, exist_ok=True)
+        self.keyn_database_path.parent.mkdir(parents=True, exist_ok=True)
         self.keyn_bonus_database_path.parent.mkdir(parents=True, exist_ok=True)
 
     @property
@@ -147,11 +148,11 @@ def get_settings() -> Settings:
         upload_path=_resolve_path(os.getenv("UPLOAD_PATH"), data_root / "uploads"),
         keyn_database_path=_resolve_path(
             os.getenv("KEYN_DATABASE_PATH"),
-            PROJECT_DIR / "keyn_start_database.txt",
+            PROJECT_DIR / "database" / "kb_00_history_rimmel.txt",
         ),
         keyn_bonus_database_path=_resolve_path(
             os.getenv("KEYN_BONUS_DATABASE_PATH"),
-            PROJECT_DIR / "keyn_bonus_database.txt",
+            PROJECT_DIR / "database" / "kb_05_bonus_system_rimmel.txt",
         ),
         chroma_collection=_get_env("CHROMA_COLLECTION", default="knowledge_base"),
         embedding_model=_get_env("EMBEDDING_MODEL", default="text-embedding-3-small"),

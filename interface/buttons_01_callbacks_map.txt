@@ -1,0 +1,64 @@
+BUTTONS 01 — Callback-карта кнопок и файлов
+===========================================
+
+CALLBACK MAP
+---------------------------------------------------------------------
+Формат:
+callback_id → файл → раздел
+
+ИСТОРИЯ
+---------------------------------------------------------------------
+history_age → database/kb_00_history_rimmel.txt → СКОЛЬКО ЛЕТ КОРОЛЕВСТВУ
+history_founder → database/kb_00_history_rimmel.txt → КТО ОСНОВАЛ РИММЭЛЬ
+history_epochs → database/kb_00_history_rimmel.txt → ТРИ ЭПОХИ РИММЭЛЯ
+history_retranslator → database/kb_00_history_rimmel.txt → ЭНЕРГЕТИЧЕСКИЙ РЕТРАНСЛЯТОР И КУПОЛ
+history_outside → database/kb_00_history_rimmel.txt → МИР ЗА ПРЕДЕЛАМИ КУПОЛА
+history_rulers → database/kb_00_history_rimmel.txt → ПРАВИТЕЛИ РИММЭЛЯ
+history_legion → database/kb_00_history_rimmel.txt → ЛЕГИОН — СОЮЗНОЕ ГОСУДАРСТВО
+
+КЕЙН
+---------------------------------------------------------------------
+kayn_identity → database/kb_01_kayne_personality_and_voice.txt → КТО ТАКОЙ КЕЙН
+kayn_favorite_topics → database/kb_01_kayne_personality_and_voice.txt → ЛЮБИМЫЕ ТЕМЫ КЕЙНА
+kayn_relationships → database/kb_01_kayne_personality_and_voice.txt → ОТНОШЕНИЕ К ПЕРСОНАЖАМ
+
+ПЕРСОНАЖИ
+---------------------------------------------------------------------
+char_leyreya → database/kb_03_characters_rimmel.txt → ПРИНЦЕССА ЛЕЙРЕЯ
+char_machiavelli → database/kb_03_characters_rimmel.txt → ПРИНЦ МАКИАВЕЛЛИ
+char_alfred → database/kb_03_characters_rimmel.txt → АЛЬФРЕД МАГЗУМЕЕВ
+char_teo → database/kb_03_characters_rimmel.txt → ТЭО
+char_priscilla → database/kb_03_characters_rimmel.txt → ПРИСЦИЛЛА
+char_leymarises → database/kb_03_characters_rimmel.txt → ЛЕЙМАРИСЫ
+
+ДОМА
+---------------------------------------------------------------------
+houses_general → database/kb_04_five_houses_valentia.txt → ОБЩЕЕ О ДОМАХ
+house_sweets → database/kb_04_five_houses_valentia.txt → ДОМ ЗАЧАРОВАННЫХ СЛАДОСТЕЙ
+house_nature → database/kb_04_five_houses_valentia.txt → ДОМ ПРИРОДЫ
+house_inventors → database/kb_04_five_houses_valentia.txt → ДОМ ИЗОБРЕТАТЕЛЕЙ
+house_alchemy → database/kb_04_five_houses_valentia.txt → ДОМ АЛХИМИИ
+house_astronomy → database/kb_04_five_houses_valentia.txt → ДОМ АСТРОНОМИИ
+houses_danger → database/kb_04_five_houses_valentia.txt → ОБ ОПАСНОСТИ ЗА КУПОЛОМ
+
+БОНУСНАЯ СИСТЕМА
+---------------------------------------------------------------------
+bonus_goal → database/kb_05_bonus_system_rimmel.txt → ГЛАВНАЯ ЦЕЛЬ
+bonus_places → database/kb_05_bonus_system_rimmel.txt → ДВА ГЛАВНЫХ МЕСТА
+bonus_lira → database/kb_05_bonus_system_rimmel.txt → ЛИРЫ — ВАЛЮТА КОРОЛЕВСТВА
+bonus_progress → database/kb_05_bonus_system_rimmel.txt → ШКАЛА ПРОГРЕССА
+bonus_resources → database/kb_05_bonus_system_rimmel.txt → РЕСУРСЫ
+bonus_vibranium → database/kb_05_bonus_system_rimmel.txt → ВИБРАНИУМ
+bonus_buildings → database/kb_05_bonus_system_rimmel.txt → КАРТА ВАЛЕНТИИ И ПОСТРОЙКИ
+bonus_retranslator → database/kb_05_bonus_system_rimmel.txt → ЭНЕРГЕТИЧЕСКИЙ РЕТРАНСЛЯТОР
+bonus_chests → database/kb_05_bonus_system_rimmel.txt → СУНДУКИ
+bonus_orders → database/kb_05_bonus_system_rimmel.txt → ДОСКА ЗАКАЗОВ
+bonus_duels → database/kb_05_bonus_system_rimmel.txt → ДУЭЛИ
+bonus_management → database/kb_05_bonus_system_rimmel.txt → УПРАВЛЕНИЕ КОРОЛЕВСТВОМ
+
+ЛОГИКА БЕЗ КНОПОК
+---------------------------------------------------------------------
+forbidden_topics → logic/logic_01_forbidden_topics_and_safe_exits.txt
+edge_cases → logic/logic_02_edge_cases_and_unexpected_questions.txt
+game_rules_script → logic/logic_03_game_rules_for_script.txt
+bot_flow → logic/logic_04_bot_flow_for_codex.txt
