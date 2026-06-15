@@ -43,7 +43,7 @@ class TextSection:
     body: str
 
     def render(self) -> str:
-        return f"{self.title}\n{self.body}".strip()
+        return self.body.strip()
 
 
 class SplitPackageNotReadyError(FileNotFoundError):
@@ -53,6 +53,7 @@ class SplitPackageNotReadyError(FileNotFoundError):
 def clear_repository_caches() -> None:
     _read_text_cached.cache_clear()
     _get_sections_cached.cache_clear()
+    _extract_heading_block_cached.cache_clear()
 
 
 def ensure_split_package_ready() -> None:
@@ -108,6 +109,16 @@ def get_sections(source_kind: str, filename: str) -> tuple[TextSection, ...]:
     return _get_sections_cached(str(path), _signature(path))
 
 
+def extract_heading_block(
+    source_kind: str,
+    filename: str,
+    heading: str,
+    stop_headings: tuple[str, ...] | list[str] = (),
+) -> str:
+    path = resolve_source_path(source_kind, filename)
+    return _extract_heading_block_cached(str(path), _signature(path), heading, tuple(stop_headings))
+
+
 def get_section_text(source_kind: str, filename: str, heading: str) -> str:
     normalized_heading = _normalize(heading)
     sections = get_sections(source_kind, filename)
@@ -148,6 +159,53 @@ def _read_text_cached(path_str: str, signature: int) -> str:
 def _get_sections_cached(path_str: str, signature: int) -> tuple[TextSection, ...]:
     text = _read_text_cached(path_str, signature)
     return tuple(_parse_sections(text))
+
+
+@lru_cache(maxsize=256)
+def _extract_heading_block_cached(
+    path_str: str,
+    signature: int,
+    heading: str,
+    stop_headings: tuple[str, ...],
+) -> str:
+    text = _read_text_cached(path_str, signature)
+    return _extract_heading_block_from_text(text, heading, stop_headings)
+
+
+def _extract_heading_block_from_text(text: str, heading: str, stop_headings: tuple[str, ...]) -> str:
+    lines = text.splitlines()
+    target = _normalize(heading)
+    if not target:
+        return ""
+
+    normalized_stops: list[str] = []
+    for item in stop_headings:
+        normalized = _normalize(item)
+        if normalized and normalized != target and normalized not in normalized_stops:
+            normalized_stops.append(normalized)
+
+    start_index = -1
+    for index, line in enumerate(lines):
+        if _normalize(line) == target:
+            start_index = index + 1
+            break
+
+    if start_index < 0:
+        return ""
+
+    while start_index < len(lines) and not lines[start_index].strip():
+        start_index += 1
+
+    end_index = len(lines)
+    for index in range(start_index, len(lines)):
+        normalized_line = _normalize(lines[index])
+        if not normalized_line:
+            continue
+        if normalized_line in normalized_stops:
+            end_index = index
+            break
+
+    return "\n".join(lines[start_index:end_index]).strip()
 
 
 def _parse_sections(text: str) -> list[TextSection]:

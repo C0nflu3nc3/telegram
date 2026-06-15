@@ -97,8 +97,8 @@ _LORE_MARKERS = (
     "сундук",
     "прогресс",
 )
-_MAX_CLASSIFIER_WORDS = 4
-_MAX_CLASSIFIER_CHARS = 32
+_MAX_CLASSIFIER_WORDS = 2
+_MAX_CLASSIFIER_CHARS = 20
 
 _RE_NORMALIZE_CHARS = re.compile(r"[^\w\s!?.,-]")
 _RE_NORMALIZE_SPACES = re.compile(r"\s{2,}")
@@ -168,6 +168,8 @@ def _is_nonsense(normalized: str, words: list[str]) -> bool:
     meaningful_words = [word for word in words if len(word) > 2 and word not in _FILLER_WORDS]
     filler_words = [word for word in words if word in _FILLER_WORDS]
 
+    if len(words) == 1 and len(words[0]) >= 4 and words[0] not in _FILLER_WORDS:
+        return True
     if len(words) <= 2 and not meaningful_words:
         return True
     if len(words) <= 4 and len(meaningful_words) <= 1 and len(filler_words) >= 1:

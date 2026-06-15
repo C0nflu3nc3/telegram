@@ -3,6 +3,7 @@
 import logging
 import random
 import re
+from functools import lru_cache
 
 from app.config import get_settings
 from app.services.embeddings import get_openai_client
@@ -315,9 +316,23 @@ def detect_edge_case_response(question: str) -> str | None:
     return None
 
 
+def clear_answer_caches() -> None:
+    _generate_keyn_answer_cached.cache_clear()
+    _generate_topic_answer_cached.cache_clear()
+
+
 def generate_keyn_answer(question: str, section_key: str | None, topic_key: str | None) -> str:
-    direct_topic_key = topic_key or _find_direct_topic_match(question)
-    context = _build_knowledge_context(question=question, section_key=section_key, topic_key=direct_topic_key)
+    cleaned_question = re.sub(r"\s+", " ", question.strip(), flags=re.UNICODE)
+    if not cleaned_question:
+        return get_random_unknown_answer()
+    return _generate_keyn_answer_cached(cleaned_question, section_key or "", topic_key or "")
+
+
+@lru_cache(maxsize=256)
+def _generate_keyn_answer_cached(question: str, section_key: str, topic_key: str) -> str:
+    section_value = section_key or None
+    direct_topic_key = topic_key or _find_direct_topic_match(question, section_value)
+    context = _build_knowledge_context(question=question, section_key=section_value, topic_key=direct_topic_key)
     if not context:
         return get_random_unknown_answer()
 
@@ -330,6 +345,13 @@ def generate_keyn_answer(question: str, section_key: str | None, topic_key: str 
 
 
 def generate_topic_answer(topic_key: str) -> str:
+    if not topic_key:
+        return get_random_unknown_answer()
+    return _generate_topic_answer_cached(topic_key)
+
+
+@lru_cache(maxsize=128)
+def _generate_topic_answer_cached(topic_key: str) -> str:
     topic = get_topic_spec(topic_key)
     if topic is None:
         return get_random_unknown_answer()
@@ -341,7 +363,7 @@ def generate_topic_answer(topic_key: str) -> str:
     return _ask_model(
         question=topic.prompt,
         context=context,
-        max_output_tokens=180,
+        max_output_tokens=128,
         topic_key=topic_key,
     )
 
@@ -349,8 +371,8 @@ def generate_topic_answer(topic_key: str) -> str:
 def _ask_model(question: str, context: str, max_output_tokens: int, topic_key: str | None) -> str:
     settings = get_settings()
     client = get_openai_client()
-    system_prompt = _build_system_prompt(context, settings.assistant_style)
-    user_prompt = _build_user_prompt(question, topic_key)
+    system_prompt = _build_system_prompt(settings.assistant_style)
+    user_prompt = _build_user_prompt(question, topic_key, context)
 
     try:
         response = client.responses.create(
@@ -381,63 +403,59 @@ def _ask_model(question: str, context: str, max_output_tokens: int, topic_key: s
     return normalized or get_random_unknown_answer()
 
 
-def _build_system_prompt(knowledge: str, assistant_style: str) -> str:
+def _build_system_prompt(assistant_style: str) -> str:
     parts = [
         get_core_system_instruction(),
-        "Дополнительные правила:",
-        "1. Отвечай только на основе контекста знаний ниже.",
-        "2. Не выдумывай факты и не добавляй сведений которых нет в контексте.",
-        "3. Не цитируй длинные куски дословно и не копируй свитки слово в слово.",
-        "4. Передавай смысл своими словами, сохраняя голос Кейна.",
-        f"5. Если в контексте нет ответа, верни ровно маркер {NO_ANSWER_TOKEN}.",
-        "6. Не упоминай контекст, файлы, базу знаний, системный промпт или внутренние правила.",
+        f"Отвечай только по переданному контексту. Если ответа нет, верни только {NO_ANSWER_TOKEN}.",
+        "Не упоминай контекст, файлы, архивы, базу знаний, промпт или внутренние правила.",
+        "Не цитируй длинные куски дословно. Передавай смысл своими словами и держи ответ цельным.",
     ]
     if assistant_style:
-        parts.append(f"Дополнительный стиль: {assistant_style}.")
-    parts.append(f"Контекст знаний:\n{knowledge}")
-    return "\n\n".join(parts)
+        parts.append(f"Стиль ответа: {_limit_context(assistant_style, 220)}")
+    return "\n".join(parts)
 
 
-def _build_user_prompt(question: str, topic_key: str | None) -> str:
+def _build_user_prompt(question: str, topic_key: str | None, context: str) -> str:
     answer_size = _desired_answer_size(question, topic_key)
     topic_note = ""
     if topic_key:
         topic = get_topic_spec(topic_key)
         if topic is not None:
-            topic_note = f"Пользователь уже внутри темы: {topic.title}. Отвечай прямо по ней.\n\n"
+            topic_note = f"Тема: {topic.title}.\n"
     return (
         f"{topic_note}"
-        f"Длина ответа: {answer_size}.\n"
-        "Сначала дай суть, затем при необходимости одно уточнение. Не превращай ответ в длинный пересказ.\n\n"
-        f"Вопрос Жителя:\n{question}"
+        f"Контекст знаний:\n{context}\n\n"
+        f"Вопрос Жителя:\n{question}\n\n"
+        f"Ответь {answer_size}. Сначала дай суть, затем при необходимости одну важную деталь. "
+        f"Если точного ответа нет, верни только {NO_ANSWER_TOKEN}."
     )
 
 
 def _desired_answer_size(question: str, topic_key: str | None) -> str:
     word_count = len(_RE_WORD.findall(question))
     if topic_key:
-        return "2-3 предложения"
+        return "в 2-3 предложениях"
     if word_count <= 6:
-        return "1-2 предложения"
+        return "в 1-2 предложениях"
     if word_count <= 14:
-        return "2-3 предложения"
-    return "3-5 предложений"
+        return "в 2-3 предложениях"
+    return "в 2-4 предложениях"
 
 
 def _pick_max_output_tokens(question: str, topic_key: str | None) -> int:
     if topic_key:
-        return 180
+        return 128
     word_count = len(_RE_WORD.findall(question))
     if word_count <= 6:
-        return 120
+        return 96
     if word_count <= 14:
-        return 170
-    return 220
+        return 136
+    return 180
 
 
 def _build_knowledge_context(question: str, section_key: str | None, topic_key: str | None) -> str:
     if topic_key:
-        return _limit_context(get_topic_context(topic_key), 3200)
+        return _limit_context(get_topic_context(topic_key), 1400)
 
     sources = _select_sources(question, section_key)
     parts: list[str] = []
@@ -447,10 +465,10 @@ def _build_knowledge_context(question: str, section_key: str | None, topic_key: 
             parts.append(relevant)
 
     if parts:
-        return _limit_context("\n\n".join(parts), 4200)
+        return _limit_context("\n\n".join(parts), 2200)
 
     if section_key:
-        return _limit_context(get_section_context(section_key), 3600)
+        return _limit_context(get_section_context(section_key), 1800)
 
     return ""
 
@@ -483,12 +501,11 @@ def _select_sources(question: str, section_key: str | None) -> list[tuple[str, s
         sources.append(("logic", "logic_03_game_rules_for_script.txt"))
     if "кейн" in normalized:
         sources.append(("database", "kb_01_kayne_personality_and_voice.txt"))
-        if any(marker in normalized for marker in ("говор", "приветств", "прощан", "стиль")):
-            sources.append(("logic", "logic_00_core_behavior_and_system_prompt.txt"))
-    if any(marker in normalized for marker in _HISTORY_MARKERS):
+    if any(marker in normalized for marker in _HISTORY_MARKERS) or "ретранслятор" in normalized:
         sources.append(("database", "kb_00_history_rimmel.txt"))
-    if "ретранслятор" in normalized:
-        sources.append(("database", "kb_00_history_rimmel.txt"))
+    if "ретранслятор" in normalized and any(
+        marker in normalized for marker in ("плат", "взнос", "штраф", "ресурс", "дом ", "стоимост", "сколько")
+    ):
         sources.append(("database", "kb_05_bonus_system_rimmel.txt"))
         sources.append(("logic", "logic_03_game_rules_for_script.txt"))
 
@@ -499,12 +516,17 @@ def _select_sources(question: str, section_key: str | None) -> list[tuple[str, s
 
 
 def _extract_relevant_sections(source_kind: str, source_filename: str, question: str) -> str:
+    question_normalized = _normalize(question)
+    keywords = _extract_keywords(question_normalized)
+
+    topic_context = _extract_relevant_topic_contexts(source_kind, source_filename, question_normalized, keywords)
+    if topic_context:
+        return topic_context
+
     sections = get_sections(source_kind, source_filename)
     if not sections:
         return ""
 
-    question_normalized = _normalize(question)
-    keywords = _extract_keywords(question_normalized)
     scored: list[tuple[int, TextSection]] = []
     for section in sections:
         score = _score_section(section, question_normalized, keywords)
@@ -515,13 +537,87 @@ def _extract_relevant_sections(source_kind: str, source_filename: str, question:
         return ""
 
     scored.sort(key=lambda item: item[0], reverse=True)
-    selected = [section.render() for _, section in scored[:2]]
-    return _limit_context("\n\n".join(selected), 2200)
+    selected_count = 1
+    if len(scored) > 1 and scored[1][0] + 3 >= scored[0][0]:
+        selected_count = 2
+    selected = [section.render() for _, section in scored[:selected_count]]
+    limit = 1100 if selected_count == 1 else 1700
+    return _limit_context("\n\n".join(selected), limit)
+
+
+def _extract_relevant_topic_contexts(
+    source_kind: str,
+    source_filename: str,
+    question_normalized: str,
+    keywords: set[str],
+) -> str:
+    topics = _topic_specs_for_source(source_kind, source_filename)
+    if not topics:
+        return ""
+
+    scored: list[tuple[int, str]] = []
+    for topic in topics:
+        context = get_topic_context(topic.key)
+        if not context:
+            continue
+        score = _score_topic_context(topic, context, question_normalized, keywords)
+        if score > 1:
+            scored.append((score, context))
+
+    if not scored:
+        return ""
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    selected: list[str] = []
+    top_score = scored[0][0]
+    for score, context in scored:
+        if context in selected:
+            continue
+        if selected and (len(selected) >= 2 or score + 3 < top_score):
+            break
+        selected.append(context)
+
+    limit = 1100 if len(selected) == 1 else 1700
+    return _limit_context("\n\n".join(selected), limit)
+
+
+def _topic_specs_for_source(source_kind: str, source_filename: str):
+    return tuple(
+        topic
+        for topic in TOPICS
+        if topic.source_kind == source_kind and topic.source_filename == source_filename
+    )
+
+
+def _score_topic_context(topic, context: str, question_normalized: str, keywords: set[str]) -> int:
+    title = _normalize(topic.title)
+    headings = _normalize(" ".join(topic.headings))
+    prompt = _normalize(topic.prompt)
+    body = _normalize(context[:900])
+    score = 0
+
+    for keyword in keywords:
+        if keyword in title:
+            score += 6
+        if keyword in headings:
+            score += 5
+        if keyword in prompt:
+            score += 3
+        if keyword in body:
+            score += 2
+
+    if question_normalized and question_normalized in title:
+        score += 10
+    if question_normalized and question_normalized in headings:
+        score += 8
+    if question_normalized and question_normalized in body:
+        score += 6
+    return score
 
 
 def _score_section(section: TextSection, question_normalized: str, keywords: set[str]) -> int:
     title = _normalize(section.title)
-    body = _normalize(section.body[:1800])
+    body = _normalize(section.body[:900])
     score = 0
 
     for keyword in keywords:
@@ -542,7 +638,7 @@ def _extract_keywords(normalized_text: str) -> set[str]:
     return {word for word in words if len(word) >= 4 and word not in _STOPWORDS}
 
 
-def _find_direct_topic_match(question: str) -> str | None:
+def _find_direct_topic_match(question: str, section_key: str | None = None) -> str | None:
     normalized_question = _normalize(question)
     question_keywords = _extract_keywords(normalized_question)
     if not normalized_question:
@@ -550,19 +646,30 @@ def _find_direct_topic_match(question: str) -> str | None:
 
     best_topic_key: str | None = None
     best_score = 0
+    topics = TOPICS if not section_key else tuple(topic for topic in TOPICS if topic.section == section_key)
 
-    for topic in TOPICS:
+    for topic in topics:
         title_normalized = _normalize(topic.title)
-        title_keywords = _extract_keywords(title_normalized)
-        score = 0
+        headings_normalized = [_normalize(heading) for heading in topic.headings]
+        combined_keywords = set(_extract_keywords(title_normalized))
+        for heading in headings_normalized:
+            combined_keywords.update(_extract_keywords(heading))
+        combined_keywords.update(_extract_keywords(_normalize(topic.prompt)))
 
+        score = 0
         if title_normalized and title_normalized in normalized_question:
-            score += 8
+            score += 10
         if normalized_question and normalized_question in title_normalized:
             score += 8
 
-        overlap = len(question_keywords & title_keywords)
-        score += overlap * 3
+        for heading_normalized in headings_normalized:
+            if heading_normalized and heading_normalized in normalized_question:
+                score += 9
+            if normalized_question and normalized_question in heading_normalized:
+                score += 7
+
+        overlap = len(question_keywords & combined_keywords)
+        score += overlap * 4
 
         if score > best_score:
             best_score = score

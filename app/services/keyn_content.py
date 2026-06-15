@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from app.services.keyn_repository import (
     clear_repository_caches,
     ensure_split_package_ready,
+    extract_heading_block,
     get_full_context,
     get_section_text,
     get_sections_text,
@@ -31,6 +32,11 @@ HOW_TO_TALK_TEXT = (
 
 NON_RUSSIAN_REPLY = "Житель, Кейн слышит тебя. Задай свой вопрос."
 BROKEN_SIGNAL_REPLY = "Сигнал искажён. Кейн не смог расшифровать послание. Попробуй ещё раз, Житель."
+CORE_SYSTEM_INSTRUCTION = (
+    "Ты — Кейн, живой архив Риммэля. Говори от первого лица, называй собеседника Житель и "
+    "сохраняй тёплый, уверенный, слегка загадочный тон. Отвечай кратко, по сути и только "
+    "в рамках мира Риммэля."
+)
 
 GREETINGS = (
     "Мои кристаллы засветились — значит, у тебя вопрос. Говори, Житель.",
@@ -561,6 +567,11 @@ SECTION_BY_BUTTON = {section.button: section.key for section in SECTIONS.values(
 
 def clear_keyn_caches() -> None:
     clear_repository_caches()
+    try:
+        from app.services.keyn_logic import clear_answer_caches
+    except Exception:
+        return
+    clear_answer_caches()
 
 
 def ensure_keyn_ready() -> None:
@@ -611,11 +622,41 @@ def get_topic_spec(topic_key: str | None) -> TopicSpec | None:
     return TOPIC_BY_KEY.get(topic_key)
 
 
+def _get_source_topic_headings(source_kind: str, source_filename: str) -> tuple[str, ...]:
+    headings: list[str] = []
+    for topic in TOPICS:
+        if topic.source_kind != source_kind or topic.source_filename != source_filename:
+            continue
+        for heading in topic.headings:
+            if heading not in headings:
+                headings.append(heading)
+    return tuple(headings)
+
+
 def get_topic_context(topic_key: str) -> str:
     topic = get_topic_spec(topic_key)
     if topic is None:
         return ""
-    return get_sections_text(topic.source_kind, topic.source_filename, topic.headings)
+
+    candidate_headings = _get_source_topic_headings(topic.source_kind, topic.source_filename)
+    parts: list[str] = []
+    for heading in topic.headings:
+        text = extract_heading_block(
+            topic.source_kind,
+            topic.source_filename,
+            heading,
+            stop_headings=candidate_headings,
+        )
+        if text and text not in parts:
+            parts.append(text)
+
+    if parts:
+        return "\n\n".join(parts).strip()
+
+    fallback = get_sections_text(topic.source_kind, topic.source_filename, topic.headings)
+    if fallback:
+        return fallback
+    return get_full_context(topic.source_kind, topic.source_filename)
 
 
 def get_section_context(section_key: str) -> str:
@@ -636,13 +677,7 @@ def get_section_context(section_key: str) -> str:
 
 
 def get_core_system_instruction() -> str:
-    text = get_section_text(
-        "logic",
-        "logic_00_core_behavior_and_system_prompt.txt",
-        "СИСТЕМНАЯ ИНСТРУКЦИЯ ИЗ ИСХОДНИКА",
-    )
-    return text or get_full_context("logic", "logic_00_core_behavior_and_system_prompt.txt")
-
+    return CORE_SYSTEM_INSTRUCTION
 
 def get_forbidden_logic_text() -> str:
     return get_full_context("logic", "logic_01_forbidden_topics_and_safe_exits.txt")
