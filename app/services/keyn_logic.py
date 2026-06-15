@@ -3,13 +3,13 @@
 import logging
 import random
 import re
-from functools import lru_cache
 
 from app.config import get_settings
 from app.services.embeddings import get_openai_client
 from app.services.keyn_content import (
     BROKEN_SIGNAL_REPLY,
     NON_RUSSIAN_REPLY,
+    TOPICS,
     get_core_system_instruction,
     get_random_forbidden_reply,
     get_random_unknown_answer,
@@ -88,8 +88,6 @@ _STOPWORDS = {
     "эта",
     "эти",
     "того",
-    "того",
-    "него",
     "него",
     "тебя",
     "тебе",
@@ -139,6 +137,29 @@ _BONUS_MARKERS = (
 )
 _RULE_MARKERS = ("обменник", "крафт", "штраф", "правил", "геймплей")
 _HISTORY_MARKERS = ("риммэл", "эпох", "легион", "валенти", "купол", "истор", "правител", "основал")
+_LORE_MARKERS = (
+    "кейн",
+    "риммэл",
+    "валенти",
+    "лейре",
+    "макиавел",
+    "альфред",
+    "тэо",
+    "тео",
+    "присцилл",
+    "леймарис",
+    "дом",
+    "купол",
+    "ретранслятор",
+    "легион",
+    "лир",
+    "граал",
+    "вибрани",
+    "ресурс",
+    "дуэл",
+    "сундук",
+    "прогресс",
+)
 _RE_WORD = re.compile(r"[A-Za-zА-Яа-яЁё0-9]+")
 _RE_NORMALIZE = re.compile(r"[^a-zа-яё0-9]+", re.IGNORECASE)
 
@@ -176,6 +197,10 @@ def looks_like_broken_signal(text: str) -> bool:
         return True
     if re.fullmatch(r"[^A-Za-zА-Яа-яЁё0-9]+", stripped):
         return True
+
+    normalized = _normalize(stripped)
+    if _has_lore_signal(normalized):
+        return False
 
     words = re.findall(r"\w+", stripped.lower(), flags=re.UNICODE)
     if not words:
@@ -291,15 +316,16 @@ def detect_edge_case_response(question: str) -> str | None:
 
 
 def generate_keyn_answer(question: str, section_key: str | None, topic_key: str | None) -> str:
-    context = _build_knowledge_context(question=question, section_key=section_key, topic_key=topic_key)
+    direct_topic_key = topic_key or _find_direct_topic_match(question)
+    context = _build_knowledge_context(question=question, section_key=section_key, topic_key=direct_topic_key)
     if not context:
         return get_random_unknown_answer()
 
     return _ask_model(
         question=question,
         context=context,
-        max_output_tokens=_pick_max_output_tokens(question, topic_key),
-        topic_key=topic_key,
+        max_output_tokens=_pick_max_output_tokens(question, direct_topic_key),
+        topic_key=direct_topic_key,
     )
 
 
@@ -441,6 +467,12 @@ def _select_sources(question: str, section_key: str | None) -> list[tuple[str, s
             sources.append(("logic", "logic_03_game_rules_for_script.txt"))
         return _unique_sources(sources)
 
+    direct_topic_key = _find_direct_topic_match(question)
+    if direct_topic_key:
+        topic = get_topic_spec(direct_topic_key)
+        if topic is not None:
+            return [(topic.source_kind, topic.source_filename)]
+
     if any(marker in normalized for marker in _CHARACTER_MARKERS):
         sources.append(("database", "kb_03_characters_rimmel.txt"))
     if any(marker in normalized for marker in _HOUSE_MARKERS):
@@ -476,7 +508,7 @@ def _extract_relevant_sections(source_kind: str, source_filename: str, question:
     scored: list[tuple[int, TextSection]] = []
     for section in sections:
         score = _score_section(section, question_normalized, keywords)
-        if score > 0:
+        if score > 1:
             scored.append((score, section))
 
     if not scored:
@@ -508,6 +540,37 @@ def _score_section(section: TextSection, question_normalized: str, keywords: set
 def _extract_keywords(normalized_text: str) -> set[str]:
     words = set(_RE_WORD.findall(normalized_text))
     return {word for word in words if len(word) >= 4 and word not in _STOPWORDS}
+
+
+def _find_direct_topic_match(question: str) -> str | None:
+    normalized_question = _normalize(question)
+    question_keywords = _extract_keywords(normalized_question)
+    if not normalized_question:
+        return None
+
+    best_topic_key: str | None = None
+    best_score = 0
+
+    for topic in TOPICS:
+        title_normalized = _normalize(topic.title)
+        title_keywords = _extract_keywords(title_normalized)
+        score = 0
+
+        if title_normalized and title_normalized in normalized_question:
+            score += 8
+        if normalized_question and normalized_question in title_normalized:
+            score += 8
+
+        overlap = len(question_keywords & title_keywords)
+        score += overlap * 3
+
+        if score > best_score:
+            best_score = score
+            best_topic_key = topic.key
+
+    if best_score >= 4:
+        return best_topic_key
+    return None
 
 
 def _unique_sources(sources: list[tuple[str, str]]) -> list[tuple[str, str]]:
@@ -552,15 +615,13 @@ def _normalize(value: str) -> str:
     return _RE_NORMALIZE.sub(" ", value.lower().replace("ё", "е")).strip()
 
 
+def _has_lore_signal(normalized: str) -> bool:
+    return any(marker in normalized for marker in _LORE_MARKERS)
+
+
 def _matches_any(text: str, patterns: tuple[str, ...]) -> bool:
     return any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in patterns)
 
 
 def _pick(*variants: str) -> str:
     return random.choice(variants)
-
-
-@lru_cache(maxsize=256)
-def _normalized_cache(value: str) -> str:
-    return _normalize(value)
-

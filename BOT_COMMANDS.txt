@@ -1,0 +1,28 @@
+﻿Команды бота
+============
+
+Пользовательские команды:
+/start - запустить бота и открыть главное меню.
+/help - краткая помощь по использованию.
+/whoami - показать свой user_id и статус админа.
+/cancel - отменить режим загрузки txt-файла.
+
+Админ-команды обновления txt:
+/load_history - обновить database/kb_00_history_rimmel.txt
+/load_kayn - обновить database/kb_01_kayne_personality_and_voice.txt
+/load_characters - обновить database/kb_03_characters_rimmel.txt
+/load_houses - обновить database/kb_04_five_houses_valentia.txt
+/load_bonus - обновить database/kb_05_bonus_system_rimmel.txt
+/load_logic_core - обновить logic/logic_00_core_behavior_and_system_prompt.txt
+/load_logic_forbidden - обновить logic/logic_01_forbidden_topics_and_safe_exits.txt
+/load_logic_edge - обновить logic/logic_02_edge_cases_and_unexpected_questions.txt
+/load_rules - обновить logic/logic_03_game_rules_for_script.txt
+/load_flow - обновить logic/logic_04_bot_flow_for_codex.txt
+/load_menu - обновить interface/buttons_00_start_menu.txt
+/load_callbacks - обновить interface/buttons_01_callbacks_map.txt
+
+Как обновлять файл:
+1. Введи нужную /load_команду.
+2. Отправь новый TXT-файл или просто текст сообщением.
+3. Бот перезапишет только выбранный файл.
+4. После сохранения кеш знаний сбрасывается автоматически.

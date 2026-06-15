@@ -41,13 +41,19 @@ from app.services.keyn_logic import (
     get_non_russian_reply,
     is_russian_text,
 )
+from app.services.keyn_managed_files import (
+    MANAGED_TEXT_COMMANDS,
+    get_managed_text_file_by_command,
+    get_managed_text_file_by_key,
+    get_managed_text_file_path,
+)
 
 
 router = Router()
 
 
-class BonusUploadState(StatesGroup):
-    waiting_for_bonus_content = State()
+class ManagedTextUploadState(StatesGroup):
+    waiting_for_text_content = State()
 
 
 def _missing_database_text() -> str:
@@ -57,8 +63,8 @@ def _missing_database_text() -> str:
     )
 
 
-@router.message(Command("load_bonus"))
-async def command_load_bonus(message: Message, state: FSMContext) -> None:
+@router.message(Command(commands=MANAGED_TEXT_COMMANDS))
+async def command_load_text_file(message: Message, state: FSMContext) -> None:
     if not message.from_user:
         return
 
@@ -66,10 +72,16 @@ async def command_load_bonus(message: Message, state: FSMContext) -> None:
     if not settings.is_admin(message.from_user.id):
         return
 
-    await state.set_state(BonusUploadState.waiting_for_bonus_content)
+    command_name = _extract_command_name(message)
+    target = get_managed_text_file_by_command(command_name)
+    if target is None:
+        return
+
+    await state.set_state(ManagedTextUploadState.waiting_for_text_content)
+    await state.update_data(target_file_key=target.key)
     await message.answer(
-        "Отправь новый TXT-файл бонусной системы или просто пришли текст сообщением. "
-        "Я заменю только бонусный архив, не трогая остальные свитки.\n\n"
+        f"Отправь новый TXT-файл или просто текст сообщением для {target.title}. "
+        f"Я обновлю только `{target.filename}`.\n\n"
         "Если передумаешь, используй /cancel.",
         reply_markup=build_main_menu(),
     )
@@ -78,15 +90,15 @@ async def command_load_bonus(message: Message, state: FSMContext) -> None:
 @router.message(Command("cancel"))
 async def command_cancel(message: Message, state: FSMContext) -> None:
     current_state = await state.get_state()
-    if current_state != BonusUploadState.waiting_for_bonus_content.state:
+    if current_state != ManagedTextUploadState.waiting_for_text_content.state:
         return
 
     await state.clear()
-    await message.answer("Загрузка бонусного архива отменена.", reply_markup=build_main_menu())
+    await message.answer("Загрузка txt-файла отменена.", reply_markup=build_main_menu())
 
 
-@router.message(BonusUploadState.waiting_for_bonus_content, F.document)
-async def handle_bonus_document(message: Message, state: FSMContext) -> None:
+@router.message(ManagedTextUploadState.waiting_for_text_content, F.document)
+async def handle_managed_document(message: Message, state: FSMContext) -> None:
     if not message.from_user or not message.document:
         return
 
@@ -94,9 +106,15 @@ async def handle_bonus_document(message: Message, state: FSMContext) -> None:
     if not settings.is_admin(message.from_user.id):
         return
 
+    target = await _get_target_from_state(state)
+    if target is None:
+        await state.clear()
+        await message.answer("Не удалось определить, какой файл нужно обновить. Запусти команду загрузки ещё раз.")
+        return
+
     file_name = (message.document.file_name or "").lower()
     if not file_name.endswith(".txt"):
-        await message.answer("Нужен именно TXT-файл с обновлённой бонусной системой.")
+        await message.answer("Нужен именно TXT-файл.")
         return
 
     try:
@@ -108,16 +126,16 @@ async def handle_bonus_document(message: Message, state: FSMContext) -> None:
         await message.answer("Не удалось загрузить файл. Попробуй отправить его ещё раз.")
         return
 
-    await _save_bonus_override(text)
+    await _save_managed_text(target.key, text)
     await state.clear()
     await message.answer(
-        "Бонусный архив обновлён. Кейн уже будет отвечать по новой версии правил.",
+        f"Файл `{target.filename}` обновлён. Кейн уже использует новую версию.",
         reply_markup=build_main_menu(),
     )
 
 
-@router.message(BonusUploadState.waiting_for_bonus_content, F.text, ~F.text.startswith("/"))
-async def handle_bonus_text(message: Message, state: FSMContext) -> None:
+@router.message(ManagedTextUploadState.waiting_for_text_content, F.text, ~F.text.startswith("/"))
+async def handle_managed_text(message: Message, state: FSMContext) -> None:
     if not message.from_user or not message.text:
         return
 
@@ -125,21 +143,27 @@ async def handle_bonus_text(message: Message, state: FSMContext) -> None:
     if not settings.is_admin(message.from_user.id):
         return
 
-    text = message.text.strip()
-    if not text:
-        await message.answer("Текст пуст. Пришли содержимое бонусной системы ещё раз.")
+    target = await _get_target_from_state(state)
+    if target is None:
+        await state.clear()
+        await message.answer("Не удалось определить, какой файл нужно обновить. Запусти команду загрузки ещё раз.")
         return
 
-    await _save_bonus_override(text)
+    text = message.text.strip()
+    if not text:
+        await message.answer("Текст пуст. Пришли содержимое файла ещё раз.")
+        return
+
+    await _save_managed_text(target.key, text)
     await state.clear()
     await message.answer(
-        "Бонусный архив обновлён. Новые числа и правила уже подхвачены.",
+        f"Файл `{target.filename}` обновлён. Новая версия уже подхвачена.",
         reply_markup=build_main_menu(),
     )
 
 
-@router.message(BonusUploadState.waiting_for_bonus_content)
-async def handle_bonus_invalid_payload(message: Message) -> None:
+@router.message(ManagedTextUploadState.waiting_for_text_content)
+async def handle_managed_invalid_payload(message: Message, state: FSMContext) -> None:
     if not message.from_user:
         return
 
@@ -147,7 +171,14 @@ async def handle_bonus_invalid_payload(message: Message) -> None:
     if not settings.is_admin(message.from_user.id):
         return
 
-    await message.answer("Пришли TXT-файл или текст сообщением. Другие форматы я в бонусный архив не запишу.")
+    target = await _get_target_from_state(state)
+    if target is None:
+        await state.clear()
+        return
+
+    await message.answer(
+        f"Для `{target.filename}` пришли TXT-файл или текст сообщением. Другие форматы я не запишу."
+    )
 
 
 @router.callback_query(F.data == BACK_TO_MENU_CALLBACK)
@@ -301,11 +332,20 @@ async def _read_document_text(message: Message) -> str:
     return _decode_bytes(raw)
 
 
-async def _save_bonus_override(text: str) -> None:
-    settings = get_settings()
+async def _get_target_from_state(state: FSMContext):
+    data = await state.get_data()
+    return get_managed_text_file_by_key(data.get("target_file_key"))
+
+
+async def _save_managed_text(target_key: str, text: str) -> None:
+    target = get_managed_text_file_by_key(target_key)
+    if target is None:
+        raise ValueError(f"Unknown managed text target: {target_key}")
+
     cleaned = text.strip()
-    settings.keyn_bonus_database_path.parent.mkdir(parents=True, exist_ok=True)
-    settings.keyn_bonus_database_path.write_text(cleaned, encoding="utf-8")
+    path = get_managed_text_file_path(target)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(cleaned, encoding="utf-8")
     clear_keyn_caches()
 
 
@@ -315,7 +355,14 @@ def _decode_bytes(raw: bytes) -> str:
             return raw.decode(encoding).strip()
         except UnicodeDecodeError:
             continue
-    raise UnicodeDecodeError("bonus", raw, 0, len(raw), "Unsupported text encoding")
+    raise UnicodeDecodeError("managed_text", raw, 0, len(raw), "Unsupported text encoding")
+
+
+def _extract_command_name(message: Message) -> str:
+    raw_text = (message.text or "").strip()
+    command_token = raw_text.split(maxsplit=1)[0]
+    command_name = command_token.lstrip("/").split("@", 1)[0]
+    return command_name.lower()
 
 
 def _append_farewell_if_needed(user_id: int, answer: str) -> str:

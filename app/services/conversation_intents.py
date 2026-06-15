@@ -74,8 +74,31 @@ _FILLER_WORDS = {
     "эээ",
     "хз",
 }
-_MAX_CLASSIFIER_WORDS = 6
-_MAX_CLASSIFIER_CHARS = 48
+_LORE_MARKERS = (
+    "кейн",
+    "риммэл",
+    "валенти",
+    "лейре",
+    "макиавел",
+    "альфред",
+    "тэо",
+    "тео",
+    "присцилл",
+    "леймарис",
+    "дом",
+    "купол",
+    "ретранслятор",
+    "легион",
+    "лир",
+    "граал",
+    "вибрани",
+    "ресурс",
+    "дуэл",
+    "сундук",
+    "прогресс",
+)
+_MAX_CLASSIFIER_WORDS = 4
+_MAX_CLASSIFIER_CHARS = 32
 
 _RE_NORMALIZE_CHARS = re.compile(r"[^\w\s!?.,-]")
 _RE_NORMALIZE_SPACES = re.compile(r"\s{2,}")
@@ -94,6 +117,9 @@ def detect_conversation_intent(text: str) -> str | None:
 
     if _is_greeting(words):
         return get_random_greeting()
+
+    if _has_lore_signal(normalized):
+        return None
 
     if _is_nonsense(normalized, words):
         return get_random_nonsense_message()
@@ -136,7 +162,7 @@ def _is_greeting(words: list[str]) -> bool:
 def _is_nonsense(normalized: str, words: list[str]) -> bool:
     if not words:
         return False
-    if _has_question_signal(normalized, words) or _has_request_signal(words):
+    if _has_question_signal(normalized, words) or _has_request_signal(words) or _has_lore_signal(normalized):
         return False
 
     meaningful_words = [word for word in words if len(word) > 2 and word not in _FILLER_WORDS]
@@ -163,6 +189,10 @@ def _has_request_signal(words: list[str]) -> bool:
     return any(any(word.startswith(stem) for stem in _REQUEST_STEMS) for word in words)
 
 
+def _has_lore_signal(normalized: str) -> bool:
+    return any(marker in normalized for marker in _LORE_MARKERS)
+
+
 def _has_repeated_word_loop(words: list[str]) -> bool:
     compact = [word for word in words if len(word) > 1]
     if len(compact) < 3:
@@ -181,9 +211,9 @@ def _detect_intent_via_api(normalized_text: str) -> str | None:
     settings = get_settings()
     client = get_openai_client()
     instructions = (
-        "Классифицируй короткую реплику. Варианты: greeting, nonsense, other. "
+        "Классифицируй очень короткую реплику. Варианты: greeting, nonsense, other. "
         "greeting = приветствие; nonsense = бессвязная или непонятная реплика без ясного вопроса; "
-        "other = всё остальное. Если виден осмысленный вопрос или просьба, выбирай other. "
+        "other = всё остальное. Если виден осмысленный вопрос, термин или просьба, выбирай other. "
         "Ответь одним словом."
     )
 
